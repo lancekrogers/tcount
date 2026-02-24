@@ -81,7 +81,7 @@ jobs:
           cat > homebrew-tap/Formula/tcount.rb << 'FORMULA'
           class Tcount < Formula
             desc "Count tokens in files using various LLM tokenizers"
-            homepage "https://github.com/lancekrogers/go-token-counter"
+            homepage "https://github.com/lancekrogers/tcount"
             version "REPLACE_VERSION"
             license "MIT"
 

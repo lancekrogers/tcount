@@ -24,20 +24,20 @@ brew install lancekrogers/tap/tcount
 ### Go
 
 ```bash
-go install github.com/lancekrogers/go-token-counter/cmd/tcount@latest
+go install github.com/lancekrogers/tcount/cmd/tcount@latest
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/lancekrogers/go-token-counter.git
-cd go-token-counter
+git clone https://github.com/lancekrogers/tcount.git
+cd tcount
 go build -o bin/tcount ./cmd/tcount
 ```
 
 ### Binary releases
 
-Pre-built binaries for macOS, Linux, and Windows are available on the [releases page](https://github.com/lancekrogers/go-token-counter/releases).
+Pre-built binaries for macOS, Linux, and Windows are available on the [releases page](https://github.com/lancekrogers/tcount/releases).
 
 ## Quick Start
 
@@ -270,12 +270,12 @@ for f in docs/*.md; do tcount --json "$f"; done | jq -s '.'
 
 ## Library Usage
 
-go-token-counter can be used as a Go library in your own projects.
+tcount can be used as a Go library in your own projects.
 
 ### Installation
 
 ```bash
-go get github.com/lancekrogers/go-token-counter/tokenizer
+go get github.com/lancekrogers/tcount/tokenizer
 ```
 
 ### Basic Token Counting
@@ -288,7 +288,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/lancekrogers/go-token-counter/tokenizer"
+    "github.com/lancekrogers/tcount/tokenizer"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/lancekrogers/go-token-counter/tokenizer"
+	"github.com/lancekrogers/tcount/tokenizer"
 )
 
 func TestIntegrationTokenizer_O200kBase(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lancekrogers/go-token-counter/internal/buildutil/ui"
+	"github.com/lancekrogers/tcount/internal/buildutil/ui"
 )
 
 // ldflags returns linker flags that inject version from git describe.

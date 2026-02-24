@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/lancekrogers/go-token-counter/tokenizer"
+	"github.com/lancekrogers/tcount/tokenizer"
 )
 
 var binaryPath string

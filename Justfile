@@ -88,7 +88,7 @@ tag version="":
         git push origin "${next}"
         echo ""
         echo "Tagged and pushed ${next}!"
-        echo "Watch the release: https://github.com/lancekrogers/go-token-counter/actions"
+        echo "Watch the release: https://github.com/lancekrogers/tcount/actions"
     else
         echo "Aborted."
     fi
@@ -106,5 +106,5 @@ setup-secrets:
         echo "Set HOMEBREW_TAP_TOKEN in .env first (see comments for instructions)."
         exit 1
     fi
-    echo "${HOMEBREW_TAP_TOKEN}" | gh secret set HOMEBREW_TAP_TOKEN --repo lancekrogers/go-token-counter
+    echo "${HOMEBREW_TAP_TOKEN}" | gh secret set HOMEBREW_TAP_TOKEN --repo lancekrogers/tcount
     echo "Secret HOMEBREW_TAP_TOKEN set successfully."

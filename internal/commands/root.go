@@ -12,10 +12,10 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
-	"github.com/lancekrogers/go-token-counter/internal/errors"
-	"github.com/lancekrogers/go-token-counter/internal/ui"
-	"github.com/lancekrogers/go-token-counter/tokenizer"
-	"github.com/lancekrogers/go-token-counter/tokenizer/fileops"
+	"github.com/lancekrogers/tcount/internal/errors"
+	"github.com/lancekrogers/tcount/internal/ui"
+	"github.com/lancekrogers/tcount/tokenizer"
+	"github.com/lancekrogers/tcount/tokenizer/fileops"
 )
 
 var (

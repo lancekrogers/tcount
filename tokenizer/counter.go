@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/lancekrogers/go-token-counter/tokenizer/fileops"
+	"github.com/lancekrogers/tcount/tokenizer/fileops"
 )
 
 // Counter handles token counting.

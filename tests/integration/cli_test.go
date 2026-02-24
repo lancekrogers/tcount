@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lancekrogers/go-token-counter/tokenizer"
+	"github.com/lancekrogers/tcount/tokenizer"
 )
 
 func TestIntegrationCLI_SingleFile(t *testing.T) {

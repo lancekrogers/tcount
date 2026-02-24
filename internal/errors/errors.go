@@ -1,4 +1,4 @@
-// Package errors provides structured error types for go-token-counter.
+// Package errors provides structured error types for tcount.
 package errors
 
 import (
