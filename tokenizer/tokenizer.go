@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	sentencepiece "github.com/eliben/go-sentencepiece"
-	"github.com/lancekrogers/go-token-counter/tokenizer/bpe"
+	"github.com/lancekrogers/tcount/tokenizer/bpe"
 )
 
 // Tokenizer counts tokens in text using a specific tokenization method.

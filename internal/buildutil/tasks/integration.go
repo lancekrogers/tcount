@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lancekrogers/go-token-counter/internal/buildutil/ui"
+	"github.com/lancekrogers/tcount/internal/buildutil/ui"
 )
 
 // Integration runs integration tests (tests with "Integration" in their name)

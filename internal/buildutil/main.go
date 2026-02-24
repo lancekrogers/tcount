@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/lancekrogers/go-token-counter/internal/buildutil/tasks"
-	"github.com/lancekrogers/go-token-counter/internal/buildutil/ui"
+	"github.com/lancekrogers/tcount/internal/buildutil/tasks"
+	"github.com/lancekrogers/tcount/internal/buildutil/ui"
 )
 
 var (

@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	"github.com/lancekrogers/go-token-counter/tokenizer"
+	"github.com/lancekrogers/tcount/tokenizer"
 )
 
 func TestIsValidModel(t *testing.T) {

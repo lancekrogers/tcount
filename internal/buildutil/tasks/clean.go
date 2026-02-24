@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lancekrogers/go-token-counter/internal/buildutil/ui"
+	"github.com/lancekrogers/tcount/internal/buildutil/ui"
 )
 
 // Clean removes build artifacts

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lancekrogers/go-token-counter/tokenizer/fileops"
+	"github.com/lancekrogers/tcount/tokenizer/fileops"
 )
 
 func TestIntegrationFilesystem_WalkDirectory(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lancekrogers/go-token-counter/tokenizer"
+	"github.com/lancekrogers/tcount/tokenizer"
 )
 
 func ExampleNewCounter() {

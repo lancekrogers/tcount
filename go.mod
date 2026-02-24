@@ -1,4 +1,4 @@
-module github.com/lancekrogers/go-token-counter
+module github.com/lancekrogers/tcount
 
 go 1.25.6
 

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/lancekrogers/go-token-counter/internal/commands"
+import "github.com/lancekrogers/tcount/internal/commands"
 
 func main() {
 	commands.Execute(version)
