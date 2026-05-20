@@ -15,6 +15,18 @@ A fast, zero-network token counter for LLM workflows. Count tokens in files and 
 
 ## Install
 
+### npm / pnpm / bun (macOS & Linux)
+
+```bash
+npm install -g @lancekrogers/tcount
+# or
+pnpm add -g @lancekrogers/tcount
+# or
+bun add -g @lancekrogers/tcount
+```
+
+The npm package downloads the official release binary for your platform (with checksum verification) on first install.
+
 ### Homebrew (macOS & Linux)
 
 ```bash

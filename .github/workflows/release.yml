@@ -4,6 +4,21 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'tcount version to publish to npm, without leading v (example: 0.2.4)'
+        required: true
+        type: string
+      release_mode:
+        description: 'npm dist-tag channel'
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - rc
+          - dev
 
 permissions:
   contents: write
@@ -21,6 +36,7 @@ jobs:
 
   release:
     needs: test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +54,7 @@ jobs:
 
   update-homebrew:
     needs: release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Get release version
@@ -128,3 +145,51 @@ jobs:
           git add Formula/tcount.rb
           git commit -m "Update tcount to v${{ steps.version.outputs.tag }}"
           git push
+
+  publish-npm:
+    needs: release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish npm package (latest)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_MODE: stable
+        run: scripts/publish_npm_package.sh
+
+  npm-publish:
+    # Manual backfill or publish to specific channels (rc/dev)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+          path: release-source
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish npm package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_PACKAGE_DIR: release-source/npm
+          NPM_PACKAGE_VERSION: ${{ inputs.version }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: scripts/publish_npm_package.sh
