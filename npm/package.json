@@ -1,0 +1,48 @@
+{
+  "name": "@lancekrogers/tcount",
+  "version": "0.0.0",
+  "description": "Fast, zero-network token counter for LLM workflows (tcount CLI)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lancekrogers/tcount.git"
+  },
+  "homepage": "https://github.com/lancekrogers/tcount",
+  "bugs": {
+    "url": "https://github.com/lancekrogers/tcount/issues"
+  },
+  "license": "MIT",
+  "bin": {
+    "tcount": "bin/tcount"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "README.md",
+    "bin",
+    "install.js",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "keywords": [
+    "cli",
+    "llm",
+    "token",
+    "tokenizer",
+    "tiktoken",
+    "claude",
+    "llama",
+    "count",
+    "cost-estimate"
+  ]
+}
