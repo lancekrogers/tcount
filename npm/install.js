@@ -37,7 +37,7 @@ function targetForCurrentPlatform() {
 
   if (!platform || !arch) {
     throw new Error(
-      `Unsupported platform: ${process.platform}/${process.arch}. @lancekrogers/tcount currently supports macOS and Linux on x64/arm64. Use 'go install' or download binaries from https://github.com/lancekrogers/tcount/releases for other platforms.`,
+      `Unsupported platform: ${process.platform}/${process.arch}. @obedience-corp/tcount currently supports macOS and Linux on x64/arm64. Use 'go install' or download binaries from https://github.com/lancekrogers/tcount/releases for other platforms.`,
     );
   }
 

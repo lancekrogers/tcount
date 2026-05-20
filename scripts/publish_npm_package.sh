@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PACKAGE_DIR="${NPM_PACKAGE_DIR:-npm}"
-PACKAGE_NAME="${NPM_PACKAGE_NAME:-@lancekrogers/tcount}"
+PACKAGE_NAME="${NPM_PACKAGE_NAME:-@obedience-corp/tcount}"
 RELEASE_MODE="${RELEASE_MODE:-stable}"
 
 if [ -n "${NPM_PACKAGE_VERSION:-}" ]; then

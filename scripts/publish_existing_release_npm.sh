@@ -21,7 +21,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 echo "Staging npm package for tcount ${TAG} into temp dir..."
 rsync -a "$ROOT_DIR/npm/" "$TMP_DIR/"
 
-echo "Publishing @lancekrogers/tcount@${TAG} with tag '${DIST_TAG}'..."
+echo "Publishing @obedience-corp/tcount@${TAG} with tag '${DIST_TAG}'..."
 
 NPM_PACKAGE_DIR="$TMP_DIR" \
 NPM_PACKAGE_VERSION="$TAG" \
