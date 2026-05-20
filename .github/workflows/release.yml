@@ -36,6 +36,7 @@ jobs:
 
   release:
     needs: test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +54,7 @@ jobs:
 
   update-homebrew:
     needs: release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Get release version
@@ -146,6 +148,7 @@ jobs:
 
   publish-npm:
     needs: release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

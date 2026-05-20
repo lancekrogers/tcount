@@ -26,5 +26,4 @@ echo "Publishing @lancekrogers/tcount@${TAG} with tag '${DIST_TAG}'..."
 NPM_PACKAGE_DIR="$TMP_DIR" \
 NPM_PACKAGE_VERSION="$TAG" \
 NPM_DIST_TAG="$DIST_TAG" \
-NPM_PUBLISH_INTERACTIVE=never \
   "$ROOT_DIR/scripts/publish_npm_package.sh"

@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+
+const { runBinary } = require("../lib/run");
+
+runBinary("tcount").catch((err) => {
+  console.error(`Failed to run tcount: ${err.message}`);
+  process.exit(1);
+});
