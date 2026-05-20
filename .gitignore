@@ -1,5 +1,6 @@
 # Binaries
 bin/
+!npm/bin/
 dist/
 *.exe
 *.exe~
