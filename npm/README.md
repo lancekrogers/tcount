@@ -1,4 +1,4 @@
-# @lancekrogers/tcount
+# @obedience-corp/tcount
 
 npm distribution wrapper for the `tcount` CLI — a fast, zero-network token counter for LLM workflows.
 
@@ -7,11 +7,11 @@ This package provides the `tcount` command via npm / pnpm / bun.
 ## Installation
 
 ```bash
-npm install -g @lancekrogers/tcount
+npm install -g @obedience-corp/tcount
 # or
-pnpm add -g @lancekrogers/tcount
+pnpm add -g @obedience-corp/tcount
 # or
-bun add -g @lancekrogers/tcount
+bun add -g @obedience-corp/tcount
 ```
 
 After installation, the `tcount` command will be available in your PATH.
