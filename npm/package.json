@@ -1,6 +1,6 @@
 {
   "name": "@obedience-corp/tcount",
-  "version": "0.0.0",
+  "version": "0.3.0",
   "description": "Fast, zero-network token counter for LLM workflows (tcount CLI)",
   "repository": {
     "type": "git",
