@@ -203,6 +203,8 @@ func encodingMatchesProvider(encoding string, provider Provider) bool {
 		return provider == ProviderOpenAI || provider == ProviderMeta || provider == ProviderDeepSeek || provider == ProviderAlibaba || provider == ProviderMicrosoft
 	case "claude_approx":
 		return provider == ProviderAnthropic
+	case "gemini_approx":
+		return provider == ProviderGoogle
 	}
 	return false
 }
@@ -296,6 +298,7 @@ func (c *Counter) initializeTokenizers() error {
 	c.tokenizers["cl100k_base"] = tok
 
 	c.tokenizers["claude_approx"] = NewClaudeApproximator()
+	c.tokenizers["gemini_approx"] = NewGeminiApproximator()
 
 	if c.vocabFile != "" {
 		tok, err = NewSPMTokenizer(c.vocabFile)

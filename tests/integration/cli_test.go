@@ -82,18 +82,6 @@ func TestIntegrationCLI_RecursiveDir(t *testing.T) {
 	}
 }
 
-func TestIntegrationCLI_CostEstimates(t *testing.T) {
-	file := fixturesDir(t) + "/sample.txt"
-	stdout, _, exitCode := runTcount(t, "--cost", "--model", "gpt-4o", file)
-
-	if exitCode != 0 {
-		t.Fatalf("expected exit code 0, got %d", exitCode)
-	}
-	if !strings.Contains(stdout, "Cost Estimates") {
-		t.Errorf("expected 'Cost Estimates' in output:\n%s", stdout)
-	}
-}
-
 func TestIntegrationCLI_ProviderFilter(t *testing.T) {
 	file := fixturesDir(t) + "/sample.txt"
 	stdout, _, exitCode := runTcount(t, "--json", "--provider", "openai", "--all", file)

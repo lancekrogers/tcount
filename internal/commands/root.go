@@ -29,7 +29,6 @@ type countOptions struct {
 	provider      string
 	all           bool
 	jsonOutput    bool
-	showCost      bool
 	showModels    bool
 	recursive     bool
 	charsPerToken float64
@@ -50,14 +49,15 @@ func newRootCmd(version string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "tcount [file|directory]",
 		Version: version,
-		Short: "Count tokens in files using various LLM tokenizers",
+		Short:   "Count tokens in files using various LLM tokenizers",
 		Long: `Count tokens in a file or directory using multiple tokenization methods.
 
 Provides token counts using different LLM tokenizers and approximation methods,
-helping you understand token usage and estimate costs.
+helping you understand how much of a model's context window your text uses.
 
-Supports all modern OpenAI models (GPT-5.x, GPT-4.1, GPT-4o, o-series) and
-Anthropic Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5, and earlier).
+Supports all modern OpenAI models (GPT-5.x, GPT-4.1, GPT-4o, o-series),
+Anthropic Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5, and earlier), and
+Google Gemini models.
 
 When counting a directory with --recursive, the command:
   - Respects .gitignore files
@@ -67,8 +67,9 @@ When counting a directory with --recursive, the command:
   tcount --model gpt-4o doc.md                             # Use GPT-4o tokenizer
   tcount --model gpt-5 doc.md                              # Use GPT-5 tokenizer
   tcount --model claude-sonnet-4.6 doc.md                   # Use Claude Sonnet 4.6
+  tcount --model gemini-2.5-pro doc.md                      # Use Gemini 2.5 Pro (approx)
   tcount --model llama-3.1-8b --vocab-file tokenizer.model doc.md  # SentencePiece
-  tcount --all --cost doc.md                               # Show all methods with costs
+  tcount --all doc.md                                      # Show all counting methods
   tcount --json doc.md                                     # Output as JSON
   tcount -r ./src                                          # Count all files in directory
   tcount -r --models ./project                             # Show encoding→model lookup`,
@@ -103,6 +104,9 @@ Anthropic Models:
   Haiku:            claude-haiku-4.5, claude-haiku-3.5, claude-haiku-3
   Legacy:           claude-opus-3
 
+Google Models (character approximation):
+  Gemini:           gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite
+
 Open Source Models (BPE approximation):
   Llama:            llama-3.1-8b, llama-3.1-70b, llama-3.1-405b, llama-4-scout, llama-4-maverick
   DeepSeek:         deepseek-v2, deepseek-v3, deepseek-coder-v2
@@ -111,10 +115,9 @@ Open Source Models (BPE approximation):
 	cmd.Flags().StringVar(&opts.vocabFile, "vocab-file", "", `path to SentencePiece .model file for exact tokenization
 Required for models that use SentencePiece (e.g., llama-3.1-8b)
 Download vocab files from HuggingFace (see error messages for URLs)`)
-	cmd.Flags().StringVar(&opts.provider, "provider", "all", `filter models by provider (openai, anthropic, meta, deepseek, alibaba, microsoft, all)`)
+	cmd.Flags().StringVar(&opts.provider, "provider", "all", `filter models by provider (openai, anthropic, google, meta, deepseek, alibaba, microsoft, all)`)
 	cmd.Flags().BoolVar(&opts.all, "all", false, "show all counting methods")
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "output in JSON format")
-	cmd.Flags().BoolVar(&opts.showCost, "cost", false, "include cost estimates")
 	cmd.Flags().BoolVarP(&opts.showModels, "models", "m", false, "show encoding-to-model lookup table")
 	cmd.Flags().BoolVarP(&opts.recursive, "recursive", "r", false, "recursively count tokens in directory")
 	cmd.Flags().BoolVarP(&opts.recursive, "directory", "d", false, "alias for --recursive")
@@ -165,7 +168,7 @@ func requiresSentencePiece(model string) (bool, string) {
 }
 
 // validProviders lists accepted values for the --provider flag.
-var validProviders = []string{"openai", "anthropic", "meta", "deepseek", "alibaba", "microsoft", "all"}
+var validProviders = []string{"openai", "anthropic", "google", "meta", "deepseek", "alibaba", "microsoft", "all"}
 
 func runCount(ctx context.Context, path string, opts *countOptions) error {
 	display := ui.New(noColor, verbose)
@@ -254,10 +257,6 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		result.FileCount = fileCount
 	}
 
-	if opts.showCost {
-		result.Costs = tokenizer.CalculateCosts(result.Methods)
-	}
-
 	if opts.jsonOutput {
 		return outputJSON(result)
 	}
@@ -304,6 +303,16 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 	fmt.Printf("  %s %s\n", labelStyle.Render("Lines:"), valStyle.Render(formatInt(result.Lines)))
 	fmt.Println()
 
+	// Context usage is only shown when a specific --model attaches a context
+	// window to its method(s).
+	showContext := false
+	for _, method := range result.Methods {
+		if method.ContextWindow > 0 {
+			showContext = true
+			break
+		}
+	}
+
 	// Build token table rows
 	rows := make([][]string, 0, len(result.Methods))
 	for _, method := range result.Methods {
@@ -313,7 +322,11 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 		} else if method.Name == "claude_3_approx" {
 			accuracy = "Estimated"
 		}
-		rows = append(rows, []string{method.DisplayName, formatInt(method.Tokens), accuracy})
+		row := []string{method.DisplayName, formatInt(method.Tokens), accuracy}
+		if showContext {
+			row = append(row, formatContextUsage(method.Tokens, method.ContextWindow))
+		}
+		rows = append(rows, row)
 	}
 
 	// Styled table
@@ -322,10 +335,15 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 	cellStyle := lipgloss.NewStyle().PaddingLeft(1).PaddingRight(1)
 	tokenCellStyle := cellStyle.Align(lipgloss.Right)
 
+	headers := []string{"Method", "Tokens", "Accuracy"}
+	if showContext {
+		headers = append(headers, "Context Usage")
+	}
+
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(purple)).
-		Headers("Method", "Tokens", "Accuracy").
+		Headers(headers...).
 		Rows(rows...).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
@@ -351,17 +369,6 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 
 	fmt.Println(sectionStyle.Render("Token Counts by Method"))
 	fmt.Println(t)
-
-	// Cost section
-	if len(result.Costs) > 0 {
-		fmt.Println()
-		fmt.Println(sectionStyle.Render("Cost Estimates (Input)"))
-		for _, cost := range result.Costs {
-			fmt.Printf("  %s $%.4f ($%.2f/1M tokens)\n",
-				labelStyle.Render(cost.Model+":"),
-				cost.Cost, cost.RatePer1M)
-		}
-	}
 
 	// Model lookup
 	if showModels {
@@ -395,13 +402,51 @@ func formatInt(n int) string {
 	return b.String()
 }
 
+// formatContextUsage returns a "<pct> of <window>" string describing how much
+// of a model's context window the token count consumes. Returns empty if the
+// window is unknown.
+func formatContextUsage(tokens, window int) string {
+	if window <= 0 {
+		return ""
+	}
+	pct := float64(tokens) / float64(window) * 100
+	var pctStr string
+	switch {
+	case pct >= 10:
+		pctStr = fmt.Sprintf("%.0f%%", pct)
+	case pct >= 1:
+		pctStr = fmt.Sprintf("%.1f%%", pct)
+	case pct >= 0.1:
+		pctStr = fmt.Sprintf("%.2f%%", pct)
+	default:
+		pctStr = "<0.1%"
+	}
+	return fmt.Sprintf("%s of %s", pctStr, formatWindow(window))
+}
+
+// formatWindow renders a context-window size compactly (e.g. 1M, 400K, 128K).
+func formatWindow(n int) string {
+	switch {
+	case n >= 1_000_000:
+		m := float64(n) / 1_000_000
+		if m == float64(int(m)) {
+			return fmt.Sprintf("%dM", int(m))
+		}
+		return fmt.Sprintf("%.1fM", m)
+	case n >= 1000:
+		return fmt.Sprintf("%dK", n/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
 // outputModelLookup prints the encoding→model mapping.
 func outputModelLookup(sectionStyle, labelStyle lipgloss.Style) {
 	fmt.Println(sectionStyle.Render("Model Lookup"))
 
 	byEncoding := tokenizer.ModelsByEncoding()
 
-	order := []string{"o200k_base", "cl100k_base", "claude_approx"}
+	order := []string{"o200k_base", "cl100k_base", "claude_approx", "gemini_approx"}
 	for _, enc := range order {
 		models, ok := byEncoding[enc]
 		if !ok {

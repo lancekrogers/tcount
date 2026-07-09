@@ -27,7 +27,6 @@ type CountResult struct {
 	Words       int            `json:"words"`
 	Lines       int            `json:"lines"`
 	Methods     []MethodResult `json:"methods"`
-	Costs       []CostEstimate `json:"costs,omitempty"`
 }
 
 // MethodResult represents token count for a specific method.
@@ -37,14 +36,6 @@ type MethodResult struct {
 	Tokens        int    `json:"tokens"`
 	IsExact       bool   `json:"is_exact"`
 	ContextWindow int    `json:"context_window,omitempty"`
-}
-
-// CostEstimate represents cost estimation for a model.
-type CostEstimate struct {
-	Model     string  `json:"model"`
-	Tokens    int     `json:"tokens"`
-	Cost      float64 `json:"cost"`
-	RatePer1M float64 `json:"rate_per_1m"`
 }
 
 // CounterOptions configures the counter.
