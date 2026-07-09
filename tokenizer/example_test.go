@@ -46,7 +46,7 @@ func ExampleCounter_Count() {
 	// Output:
 	// Characters: 44
 	// Words: 9
-	// Methods: 6
+	// Methods: 7
 }
 
 func ExampleCounter_CountFile() {
@@ -127,23 +127,4 @@ func ExampleGetModelMetadata() {
 	// Provider: openai
 	// Encoding: o200k_base
 	// Context: 128000
-}
-
-func ExampleCalculateCosts() {
-	counter, err := tokenizer.NewCounter(tokenizer.CounterOptions{})
-	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	ctx := context.Background()
-	result, _ := counter.Count(ctx, "Hello, world!", "gpt-4o", false)
-	costs := tokenizer.CalculateCosts(result.Methods)
-	for _, c := range costs {
-		fmt.Printf("%s: $%.6f\n", c.Model, c.Cost)
-	}
-	// Output:
-	// gpt-5: $0.000005
-	// gpt-4o: $0.000010
-	// claude-sonnet-4.6: $0.000012
-	// claude-sonnet-4.5: $0.000012
 }

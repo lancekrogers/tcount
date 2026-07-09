@@ -1,8 +1,8 @@
 // Package tokenizer provides token counting for LLM models.
 //
 // It supports exact BPE tokenization for OpenAI models, character-based
-// approximation for Claude models, and SentencePiece tokenization for
-// open-source models like Llama and Mistral.
+// approximation for Claude and Gemini models, and SentencePiece tokenization
+// for open-source models like Llama and Mistral.
 package tokenizer
 
 import (
@@ -150,6 +150,42 @@ func (c *ClaudeApproximator) DisplayName() string {
 
 // IsExact returns false for approximations.
 func (c *ClaudeApproximator) IsExact() bool {
+	return false
+}
+
+// geminiCharsPerToken is the approximate character-to-token ratio for Gemini models.
+// Based on Google's guidance of ~4 characters per token for English text.
+const geminiCharsPerToken = 4.0
+
+// GeminiApproximator provides approximation for Google Gemini models.
+// Gemini uses its own SentencePiece tokenizer; for exact counts supply the
+// vocab file via --vocab-file. Without it, this character-based estimate applies.
+type GeminiApproximator struct{}
+
+// NewGeminiApproximator creates a character-based approximator tuned for
+// Gemini models. Uses a 4.0 characters per token ratio.
+func NewGeminiApproximator() Tokenizer {
+	return &GeminiApproximator{}
+}
+
+// CountTokens approximates token count for Gemini.
+func (g *GeminiApproximator) CountTokens(text string) (int, error) {
+	tokens := int(float64(len(text)) / geminiCharsPerToken)
+	return tokens, nil
+}
+
+// Name returns the machine-readable tokenizer identifier.
+func (g *GeminiApproximator) Name() string {
+	return "gemini_approx"
+}
+
+// DisplayName returns the human-readable tokenizer name.
+func (g *GeminiApproximator) DisplayName() string {
+	return "Gemini (approx)"
+}
+
+// IsExact returns false for approximations.
+func (g *GeminiApproximator) IsExact() bool {
 	return false
 }
 

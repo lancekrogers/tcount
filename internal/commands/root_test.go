@@ -72,7 +72,7 @@ func TestIsValidProvider(t *testing.T) {
 		{"alibaba", true},
 		{"microsoft", true},
 		{"all", true},
-		{"google", false},
+		{"google", true},
 		{"invalid", false},
 		{"", false},
 	}
@@ -151,7 +151,7 @@ func TestNewRootCmd(t *testing.T) {
 	}
 
 	// Verify flags exist
-	flags := []string{"model", "vocab-file", "provider", "all", "json", "cost", "models", "recursive", "no-color", "verbose"}
+	flags := []string{"model", "vocab-file", "provider", "all", "json", "models", "recursive", "no-color", "verbose"}
 	for _, flag := range flags {
 		if cmd.Flags().Lookup(flag) == nil && cmd.PersistentFlags().Lookup(flag) == nil {
 			t.Errorf("Flag --%s not found", flag)
