@@ -6,15 +6,15 @@
 [![npm](https://img.shields.io/npm/v/@obedience-corp/tcount)](https://www.npmjs.com/package/@obedience-corp/tcount)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A fast, zero-network token counter for LLM workflows. Count tokens in files and directories using exact OpenAI tokenizers, Claude approximations, SentencePiece vocabularies, and generic estimation — all from a single CLI.
+A fast, zero-network token counter for LLM workflows. Count tokens in files and directories using exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation — all from a single CLI.
 
 ## Features
 
 - **Exact BPE tokenization** — offline, no network calls. Supports GPT-5, GPT-4.1, GPT-4o, o-series, and legacy GPT-4/3.5.
 - **Claude approximation** calibrated for Anthropic models
+- **Gemini approximation** for Google Gemini models
 - **SentencePiece** exact tokenization for Llama and other open-source models (bring your own `.model` file)
-- **Context window usage** — see what percentage of a model's context you're consuming
-- **Cost estimates** with per-1M-token pricing via `--cost`
+- **Context window usage** — see what percentage of a model's context you're consuming (shown when you pass `--model`)
 - **Provider filtering** — compare models from a specific provider
 - **Directory scanning** with `.gitignore` support and binary file detection
 - **JSON output** for scripting and pipelines
@@ -63,11 +63,11 @@ Pre-built binaries for macOS, Linux, and Windows are available on the [releases 
 # Count tokens in a file
 tcount myfile.txt
 
-# Specific model
+# Specific model (shows context-window usage)
 tcount --model gpt-5 prompt.md
 
-# All methods with cost estimates
-tcount --all --cost prompt.md
+# All counting methods
+tcount --all prompt.md
 
 # Filter by provider
 tcount --provider openai prompt.md
@@ -95,16 +95,25 @@ tcount --json document.md
 ### Anthropic
 | Model | Method | Context |
 |-------|--------|---------|
-| `claude-opus-4.6`, `claude-opus-4.5` | Approximation | 200K |
+| `claude-opus-4.6`, `claude-opus-4.5` | Approximation | 1M |
 | `claude-opus-4.1`, `claude-opus-4` | Approximation | 200K |
-| `claude-sonnet-4.6`, `claude-sonnet-4.5`, `claude-sonnet-4` | Approximation | 200K |
+| `claude-sonnet-4.6`, `claude-sonnet-4.5` | Approximation | 1M |
+| `claude-sonnet-4` | Approximation | 200K |
 | `claude-haiku-4.5`, `claude-haiku-3.5`, `claude-haiku-3` | Approximation | 200K |
 | `claude-opus-3` (deprecated) | Approximation | 200K |
+
+### Google
+| Model | Method | Context |
+|-------|--------|---------|
+| `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` | Approximation | 1M |
+
+Gemini uses its own SentencePiece tokenizer. Without a `--vocab-file`, tcount approximates at ~4 characters per token.
 
 ### Meta (Llama)
 | Model | Method | Context |
 |-------|--------|---------|
-| `llama-4-scout`, `llama-4-maverick` | tiktoken approx / SentencePiece | 128K |
+| `llama-4-scout` | tiktoken approx / SentencePiece | 10M |
+| `llama-4-maverick` | tiktoken approx / SentencePiece | 1M |
 | `llama-3.1-8b`, `llama-3.1-70b`, `llama-3.1-405b` | tiktoken approx / SentencePiece | 128K |
 
 ### DeepSeek
@@ -115,8 +124,8 @@ tcount --json document.md
 ### Alibaba (Qwen)
 | Model | Method | Context |
 |-------|--------|---------|
-| `qwen-2.5-7b`, `qwen-2.5-14b`, `qwen-2.5-72b` | tiktoken approx | 32K |
-| `qwen-3-72b` | tiktoken approx | 32K |
+| `qwen-2.5-7b`, `qwen-2.5-14b`, `qwen-2.5-72b` | tiktoken approx | 128K |
+| `qwen-3-72b` | tiktoken approx | 128K |
 
 ### Microsoft (Phi)
 | Model | Method | Context |
@@ -130,6 +139,7 @@ tcount --json document.md
 | tiktoken (o200k_base) | Exact | GPT-5.x, GPT-4.1, GPT-4o, o3, o4-mini |
 | tiktoken (cl100k_base) | Exact | GPT-4, GPT-3.5 |
 | Claude approximation | Estimated | All Claude models (÷3.8 char ratio) |
+| Gemini approximation | Approximate | All Gemini models (÷4.0 char ratio) |
 | SentencePiece | Exact | Llama with `--vocab-file` |
 | tiktoken approximation | Approximate | Llama, DeepSeek, Qwen, Phi (no vocab file) |
 | Character-based | Approximate | Any (chars ÷ configurable ratio, default 4.0) |
@@ -146,13 +156,12 @@ tcount [file|directory] [flags]
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--model` | | Specific model tokenizer |
+| `--model` | | Specific model tokenizer (adds a context-usage column) |
 | `--models` | `-m` | Show encoding-to-model lookup table |
-| `--provider` | | Filter by provider: `openai`, `anthropic`, `meta`, `deepseek`, `alibaba`, `microsoft`, `all` |
+| `--provider` | | Filter by provider: `openai`, `anthropic`, `google`, `meta`, `deepseek`, `alibaba`, `microsoft`, `all` |
 | `--vocab-file` | | Path to SentencePiece `.model` file for exact Llama tokenization |
 | `--all` | | Show all counting methods |
 | `--json` | | JSON output |
-| `--cost` | | Include cost estimates (per 1M tokens) |
 | `--recursive` | `-r` | Recursively count files in a directory |
 | `--directory` | `-d` | Alias for `--recursive` |
 | `--chars-per-token` | | Character/token ratio for approximation (default: 4.0) |
@@ -164,56 +173,51 @@ tcount [file|directory] [flags]
 
 ### Single model
 
-```
-$ tcount --model gpt-5 document.md
-
-Token Count Report for: document.md
-═══════════════════════════════════════════════════════
-
-Basic Statistics:
-  Characters:     5451
-  Words:          662
-  Lines:          222
-
-Token Counts by Method:
-  ┌─────────────────────────┬──────────┬────────────┬──────────────────┐
-  │ Method                  │ Tokens   │ Accuracy   │ Context Usage    │
-  ├─────────────────────────┼──────────┼────────────┼──────────────────┤
-  │ GPT (gpt-5)             │ 1445     │ Exact      │ 0.7% of 200K     │
-  └─────────────────────────┴──────────┴────────────┴──────────────────┘
-```
-
-### All methods with costs
+Passing `--model` shows the exact (or approximate) count for that model plus
+how much of its context window the text uses:
 
 ```
-$ tcount --all --cost document.md
+$ tcount --model gpt-5 tokenizer.go
 
-Token Count Report for: document.md
-═══════════════════════════════════════════════════════
+Token Count Report for: tokenizer.go
 
-Basic Statistics:
-  Characters:     5451
-  Words:          662
-  Lines:          222
+Basic Statistics
+  Characters: 7,397
+  Words: 912
+  Lines: 242
 
-Token Counts by Method:
-  ┌─────────────────────────┬──────────┬────────────┬──────────────────┐
-  │ Method                  │ Tokens   │ Accuracy   │ Context Usage    │
-  ├─────────────────────────┼──────────┼────────────┼──────────────────┤
-  │ GPT (gpt-5)             │ 1445     │ Exact      │ 0.7% of 200K     │
-  │ GPT (gpt-4o)            │ 1445     │ Exact      │ 1.1% of 128K     │
-  │ Claude (approx)         │ 1434     │ Estimated  │ 0.7% of 200K     │
-  │ Llama (llama-3.1-8b)    │ 1445     │ Exact      │ 1.1% of 128K     │
-  │ Character-based (÷4.0)  │ 1362     │ Approx     │                  │
-  │ Word-based (×1.33)      │ 882      │ Approx     │                  │
-  │ Whitespace split        │ 662      │ Approx     │                  │
-  └─────────────────────────┴──────────┴────────────┴──────────────────┘
+Token Counts by Method
+╭────────────────────┬────────┬──────────┬───────────────╮
+│       Method       │ Tokens │ Accuracy │ Context Usage │
+├────────────────────┼────────┼──────────┼───────────────┤
+│ o200k_base (gpt-5) │  1,839 │ Exact    │ 0.46% of 400K │
+╰────────────────────┴────────┴──────────┴───────────────╯
+```
 
-Cost Estimates (Input):
-  gpt-5:           $0.0018 ($1.25/1M tokens)
-  gpt-4o:          $0.0036 ($2.50/1M tokens)
-  claude-sonnet-4.6: $0.0043 ($3.00/1M tokens)
-  claude-sonnet-4.5: $0.0043 ($3.00/1M tokens)
+### All methods
+
+```
+$ tcount --all tokenizer.go
+
+Token Count Report for: tokenizer.go
+
+Basic Statistics
+  Characters: 7,397
+  Words: 912
+  Lines: 242
+
+Token Counts by Method
+╭────────────────────────┬────────┬───────────╮
+│         Method         │ Tokens │ Accuracy  │
+├────────────────────────┼────────┼───────────┤
+│ cl100k_base            │  1,835 │ Exact     │
+│ Claude (approx)        │  1,946 │ Estimated │
+│ Gemini (approx)        │  1,849 │ Approx    │
+│ o200k_base             │  1,839 │ Exact     │
+│ Character-based (÷4.0) │  1,849 │ Approx    │
+│ Word-based (×1.33)     │  1,216 │ Approx    │
+│ Whitespace split       │    912 │ Approx    │
+╰────────────────────────┴────────┴───────────╯
 ```
 
 ### SentencePiece for exact Llama tokenization
@@ -232,26 +236,27 @@ Without `--vocab-file`, Llama models use a tiktoken-based approximation.
 ```
 $ tcount -r --verbose tokenizer/
 
-Found 4 text files (skipped 0 binary, 0 ignored)
+Found 11 text files (skipped 4 binary, 0 ignored)
 Token Count Report for: tokenizer/ (directory)
-═══════════════════════════════════════════════════════
 
-Basic Statistics:
-  Files:          4
-  Characters:     14929
-  Words:          1906
-  Lines:          612
+Basic Statistics
+  Files: 11
+  Characters: 49,279
+  Words: 6,511
+  Lines: 1,841
 
-Token Counts by Method:
-  ┌─────────────────────────┬──────────┬────────────┬──────────────────┐
-  │ Method                  │ Tokens   │ Accuracy   │ Context Usage    │
-  ├─────────────────────────┼──────────┼────────────┼──────────────────┤
-  │ GPT (gpt-5)             │ 4206     │ Exact      │ 2.1% of 200K     │
-  │ Claude (approx)         │ 3928     │ Estimated  │ 2.0% of 200K     │
-  │ Character-based (÷4.0)  │ 3732     │ Approx     │                  │
-  │ Word-based (×1.33)      │ 2541     │ Approx     │                  │
-  │ Whitespace split        │ 1906     │ Approx     │                  │
-  └─────────────────────────┴──────────┴────────────┴──────────────────┘
+Token Counts by Method
+╭────────────────────────┬────────┬───────────╮
+│         Method         │ Tokens │ Accuracy  │
+├────────────────────────┼────────┼───────────┤
+│ cl100k_base            │ 14,301 │ Exact     │
+│ Claude (approx)        │ 12,968 │ Estimated │
+│ Gemini (approx)        │ 12,319 │ Approx    │
+│ o200k_base             │ 14,242 │ Exact     │
+│ Character-based (÷4.0) │ 12,319 │ Approx    │
+│ Word-based (×1.33)     │  8,681 │ Approx    │
+│ Whitespace split       │  6,511 │ Approx    │
+╰────────────────────────┴────────┴───────────╯
 ```
 
 When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, and aggregates all text files into a combined count. Use `--verbose` to see file and skip statistics.
@@ -259,20 +264,20 @@ When scanning directories, tcount respects `.gitignore` rules, skips binary file
 ### JSON output
 
 ```
-$ tcount --json --model gpt-5 document.md
+$ tcount --json --model gpt-5 tokenizer.go
 {
-  "file_path": "document.md",
-  "file_size": 5451,
-  "characters": 5451,
-  "words": 662,
-  "lines": 222,
+  "file_path": "tokenizer.go",
+  "file_size": 7397,
+  "characters": 7397,
+  "words": 912,
+  "lines": 242,
   "methods": [
     {
-      "name": "tiktoken_gpt_5",
-      "display_name": "GPT (gpt-5)",
-      "tokens": 1445,
+      "name": "bpe_gpt_5",
+      "display_name": "o200k_base (gpt-5)",
+      "tokens": 1839,
       "is_exact": true,
-      "context_window": 200000
+      "context_window": 400000
     }
   ]
 }
@@ -280,7 +285,7 @@ $ tcount --json --model gpt-5 document.md
 
 ```bash
 # Extract a specific count
-tcount --json myfile.txt | jq '.methods[] | select(.name == "tiktoken_gpt_5") | .tokens'
+tcount --json myfile.txt | jq '.methods[] | select(.name == "bpe_gpt_5") | .tokens'
 
 # Batch count all markdown files
 for f in docs/*.md; do tcount --json "$f"; done | jq -s '.'
@@ -366,17 +371,6 @@ models := tokenizer.ListModels()
 
 // List models by provider
 openaiModels := tokenizer.ListModelsByProvider(tokenizer.ProviderOpenAI)
-```
-
-### Cost Estimation
-
-```go
-ctx := context.Background()
-result, _ := counter.Count(ctx, text, "gpt-4o", false)
-costs := tokenizer.CalculateCosts(result.Methods)
-for _, c := range costs {
-    fmt.Printf("%s: $%.4f\n", c.Model, c.Cost)
-}
 ```
 
 ## Development
