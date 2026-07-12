@@ -58,13 +58,11 @@ func NewBPETokenizerByEncoding(encodingName string) (Tokenizer, error) {
 	}, nil
 }
 
-// CountTokens counts tokens using BPE tokenization.
+// CountTokens counts tokens using BPE tokenization. Counting never allows
+// special tokens, so it takes the ordinary encode path, which skips the
+// special-token scan and produces identical counts.
 func (t *BPETokenizerWrapper) CountTokens(text string) (int, error) {
-	tokens, err := t.tokenizer.Encode(text, nil, nil)
-	if err != nil {
-		return 0, fmt.Errorf("encoding text: %w", err)
-	}
-	return len(tokens), nil
+	return len(t.tokenizer.EncodeOrdinary(text)), nil
 }
 
 // Name returns the machine-readable tokenizer identifier.

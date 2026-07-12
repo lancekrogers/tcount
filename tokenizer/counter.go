@@ -3,9 +3,12 @@ package tokenizer
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/lancekrogers/tcount/tokenizer/fileops"
@@ -17,7 +20,9 @@ type Counter struct {
 	wordsPerToken float64
 	vocabFile     string
 	provider      Provider
-	tokenizers    map[string]Tokenizer
+
+	mu         sync.Mutex
+	tokenizers map[string]Tokenizer
 }
 
 // NewCounter creates a new token counter.
@@ -159,14 +164,25 @@ func (c *Counter) countAllMethods(text string) []MethodResult {
 	methods := []MethodResult{}
 	seen := make(map[string]bool)
 
-	keys := make([]string, 0, len(c.tokenizers))
-	for k := range c.tokenizers {
+	for _, encoding := range bpeEncodings {
+		if c.provider != "" && c.provider != "all" && !encodingMatchesProvider(encoding, c.provider) {
+			continue
+		}
+		if _, err := c.bpeTokenizer(encoding); err != nil {
+			continue
+		}
+	}
+
+	tokenizers := c.tokenizerSnapshot()
+
+	keys := make([]string, 0, len(tokenizers))
+	for k := range tokenizers {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	for _, encoding := range keys {
-		tokenizer := c.tokenizers[encoding]
+		tokenizer := tokenizers[encoding]
 
 		if c.provider != "" && c.provider != "all" {
 			if !encodingMatchesProvider(encoding, c.provider) {
@@ -215,7 +231,11 @@ func (c *Counter) countSpecificModel(text string, model string) ([]MethodResult,
 
 	meta := GetModelMetadata(model)
 	if meta != nil {
-		if tokenizer, ok := c.tokenizers[meta.Encoding]; ok {
+		tokenizer, err := c.tokenizerForEncoding(meta.Encoding)
+		if err != nil {
+			return nil, err
+		}
+		if tokenizer != nil {
 			count, err := tokenizer.CountTokens(text)
 			if err != nil {
 				return nil, err
@@ -231,7 +251,7 @@ func (c *Counter) countSpecificModel(text string, model string) ([]MethodResult,
 		}
 	}
 
-	if tokenizer, ok := c.tokenizers[model]; ok {
+	if tokenizer, err := c.tokenizerForEncoding(model); err == nil && tokenizer != nil {
 		count, err := tokenizer.CountTokens(text)
 		if err != nil {
 			return nil, err
@@ -283,25 +303,15 @@ func (c *Counter) getApproximations(text string) []MethodResult {
 	}
 }
 
-// initializeTokenizers sets up one tokenizer per unique encoding.
+// initializeTokenizers sets up the cheap tokenizers eagerly. The BPE
+// tokenizers parse multi-megabyte vocab tables, so they load lazily via
+// bpeTokenizer the first time an encoding is actually counted with.
 func (c *Counter) initializeTokenizers() error {
-	tok, err := NewBPETokenizerByEncoding("o200k_base")
-	if err != nil {
-		return fmt.Errorf("loading o200k_base encoding: %w", err)
-	}
-	c.tokenizers["o200k_base"] = tok
-
-	tok, err = NewBPETokenizerByEncoding("cl100k_base")
-	if err != nil {
-		return fmt.Errorf("loading cl100k_base encoding: %w", err)
-	}
-	c.tokenizers["cl100k_base"] = tok
-
 	c.tokenizers["claude_approx"] = NewClaudeApproximator()
 	c.tokenizers["gemini_approx"] = NewGeminiApproximator()
 
 	if c.vocabFile != "" {
-		tok, err = NewSPMTokenizer(c.vocabFile)
+		tok, err := NewSPMTokenizer(c.vocabFile)
 		if err != nil {
 			return fmt.Errorf("loading SentencePiece vocab %q: %w", c.vocabFile, err)
 		}
@@ -309,6 +319,50 @@ func (c *Counter) initializeTokenizers() error {
 	}
 
 	return nil
+}
+
+// bpeEncodings are the encodings loaded on demand by bpeTokenizer.
+var bpeEncodings = []string{"o200k_base", "cl100k_base"}
+
+// bpeTokenizer returns the tokenizer for a BPE encoding, loading and caching
+// it on first use.
+func (c *Counter) bpeTokenizer(encoding string) (Tokenizer, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if tok, ok := c.tokenizers[encoding]; ok {
+		return tok, nil
+	}
+
+	tok, err := NewBPETokenizerByEncoding(encoding)
+	if err != nil {
+		return nil, fmt.Errorf("loading %s encoding: %w", encoding, err)
+	}
+	c.tokenizers[encoding] = tok
+	return tok, nil
+}
+
+// tokenizerForEncoding resolves any encoding name, loading BPE encodings on
+// demand and returning nil (no error) for unknown encodings.
+func (c *Counter) tokenizerForEncoding(encoding string) (Tokenizer, error) {
+	if slices.Contains(bpeEncodings, encoding) {
+		return c.bpeTokenizer(encoding)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tokenizers[encoding], nil
+}
+
+// tokenizerSnapshot returns a copy of the current tokenizer map for
+// race-free iteration.
+func (c *Counter) tokenizerSnapshot() map[string]Tokenizer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	snap := make(map[string]Tokenizer, len(c.tokenizers))
+	maps.Copy(snap, c.tokenizers)
+	return snap
 }
 
 // countWords counts words in text.

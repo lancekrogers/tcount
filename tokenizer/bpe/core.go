@@ -1,11 +1,9 @@
 package bpe
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/dlclark/regexp2"
@@ -19,7 +17,6 @@ type Encoder struct {
 	specialTokensDecoder map[int]string
 	splitRegex           *regexp2.Regexp
 	specialRegex         *regexp2.Regexp
-	sortedTokenBytes     [][]byte
 }
 
 // NewEncoder creates a new Encoder from encoder maps and a regex pattern.
@@ -52,14 +49,6 @@ func NewEncoder(encoder map[string]int, specialTokensEncoder map[string]int, pat
 		specialTokensDecoder[v] = k
 	}
 
-	sortedTokenBytes := make([][]byte, 0, len(encoder))
-	for k := range encoder {
-		sortedTokenBytes = append(sortedTokenBytes, []byte(k))
-	}
-	sort.Slice(sortedTokenBytes, func(i, j int) bool {
-		return bytes.Compare(sortedTokenBytes[i], sortedTokenBytes[j]) < 0
-	})
-
 	return &Encoder{
 		encoder:              encoder,
 		specialTokensEncoder: specialTokensEncoder,
@@ -67,16 +56,15 @@ func NewEncoder(encoder map[string]int, specialTokensEncoder map[string]int, pat
 		specialTokensDecoder: specialTokensDecoder,
 		splitRegex:           regex,
 		specialRegex:         specialRegex,
-		sortedTokenBytes:     sortedTokenBytes,
 	}, nil
 }
 
 func (enc *Encoder) encode(text string, allowedSpecial map[string]any) ([]int, int) {
 	specialRegex := enc.specialRegex
 	regex := enc.splitRegex
-	ret := []int{}
-	lastPieceTokenLen := 0
 	textRunes := []rune(text)
+	ret := make([]int, 0, len(textRunes)/3+1)
+	lastPieceTokenLen := 0
 
 	start := 0
 	for {
@@ -96,7 +84,7 @@ func (enc *Encoder) encode(text string, allowedSpecial map[string]any) ([]int, i
 			}
 		}
 
-		end := len([]rune(text))
+		end := len(textRunes)
 		if nextSpecial != nil {
 			end = start + nextSpecial[0]
 		}
@@ -128,8 +116,8 @@ func (enc *Encoder) encode(text string, allowedSpecial map[string]any) ([]int, i
 }
 
 func (enc *Encoder) encodeOrdinary(text string) []int {
-	ret := []int{}
 	textRunes := []rune(text)
+	ret := make([]int, 0, len(textRunes)/3+1)
 	for _, mat := range findAllMatchIndices(text, enc.splitRegex) {
 		piece := cutRunes(textRunes, mat[0], mat[1])
 		if token, ok := enc.encoder[piece]; ok {
