@@ -60,7 +60,7 @@ Google Gemini models.
 When counting a directory with --recursive, the command:
   - Respects .gitignore files
   - Skips binary files automatically
-  - Returns aggregated totals for all text files`,
+  - Counts each text file in parallel and returns summed totals`,
 		Example: `  tcount document.md                                       # Count tokens in a file
   tcount --model gpt-4o doc.md                             # Use GPT-4o tokenizer
   tcount --model gpt-5 doc.md                              # Use GPT-5 tokenizer
