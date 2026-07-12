@@ -6,19 +6,21 @@
 [![npm](https://img.shields.io/npm/v/@obedience-corp/tcount)](https://www.npmjs.com/package/@obedience-corp/tcount)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A fast, zero-network token counter for LLM workflows. Count tokens in files and directories using exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation — all from a single CLI.
+A fast token counter for LLM workflows that runs entirely on your machine: no API keys, no network calls, nothing leaves your disk. Count with exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation, from a single CLI or as a Go library.
 
 ![tcount demo: default method table, --model context usage, and a recursive directory scan](https://raw.githubusercontent.com/lancekrogers/tcount/main/docs/demo.gif)
 
 ## Features
 
-- **Exact BPE tokenization** — offline, no network calls. Supports GPT-5, GPT-4.1, GPT-4o, o-series, and legacy GPT-4/3.5.
+- **100% local** — counting never touches the network, so it is safe for private codebases, unreleased prompts, and air-gapped machines
+- **CLI and Go library** — the same engine ships as a command and as an importable package ([Library Usage](#library-usage))
+- **Exact BPE tokenization** — embedded vocabularies for GPT-5, GPT-4.1, GPT-4o, o-series, and legacy GPT-4/3.5
 - **Claude approximation** calibrated for Anthropic models
 - **Gemini approximation** for Google Gemini models
 - **SentencePiece** exact tokenization for Llama and other open-source models (bring your own `.model` file)
 - **Context window usage** — see what percentage of a model's context you're consuming (shown when you pass `--model`)
 - **Provider filtering** — compare models from a specific provider
-- **Directory scanning** with `.gitignore` support and binary file detection
+- **Directory scanning** — `.gitignore`-aware, skips binaries, counts files in parallel with memory bounded by your largest file
 - **JSON output** for scripting and pipelines
 
 ## Install
@@ -80,6 +82,17 @@ tcount -r ./src
 # JSON output for scripting
 tcount --json document.md
 ```
+
+Or import the same engine in Go:
+
+```go
+import "github.com/lancekrogers/tcount/tokenizer"
+
+counter, _ := tokenizer.NewCounter(tokenizer.CounterOptions{})
+result, _ := counter.CountFile(ctx, "prompt.md", "gpt-5", false)
+```
+
+Full API in [Library Usage](#library-usage).
 
 ## Supported Models
 
@@ -184,43 +197,20 @@ $ tcount --model gpt-5 tokenizer.go
 Token Count Report for: tokenizer.go
 
 Basic Statistics
-  Characters: 7,397
-  Words: 912
-  Lines: 242
+  Characters: 8,050
+  Words: 978
+  Lines: 259
 
 Token Counts by Method
 ╭────────────────────┬────────┬──────────┬───────────────╮
 │       Method       │ Tokens │ Accuracy │ Context Usage │
 ├────────────────────┼────────┼──────────┼───────────────┤
-│ o200k_base (gpt-5) │  1,839 │ Exact    │ 0.46% of 400K │
+│ o200k_base (gpt-5) │  1,976 │ Exact    │ 0.49% of 400K │
 ╰────────────────────┴────────┴──────────┴───────────────╯
 ```
 
-### All methods
-
-```
-$ tcount --all tokenizer.go
-
-Token Count Report for: tokenizer.go
-
-Basic Statistics
-  Characters: 7,397
-  Words: 912
-  Lines: 242
-
-Token Counts by Method
-╭────────────────────────┬────────┬───────────╮
-│         Method         │ Tokens │ Accuracy  │
-├────────────────────────┼────────┼───────────┤
-│ cl100k_base            │  1,835 │ Exact     │
-│ Claude (approx)        │  1,946 │ Estimated │
-│ Gemini (approx)        │  1,849 │ Approx    │
-│ o200k_base             │  1,839 │ Exact     │
-│ Character-based (÷4.0) │  1,849 │ Approx    │
-│ Word-based (×1.33)     │  1,216 │ Approx    │
-│ Whitespace split       │    912 │ Approx    │
-╰────────────────────────┴────────┴───────────╯
-```
+Without `--model`, tcount shows every counting method side by side (see the
+demo above), and `--all` forces the full table even when a model is set.
 
 ### SentencePiece for exact Llama tokenization
 
@@ -235,30 +225,8 @@ Without `--vocab-file`, Llama models use a tiktoken-based approximation.
 
 ### Directory scanning
 
-```
-$ tcount -r --verbose tokenizer/
-
-Found 14 text files (skipped 4 binary, 0 ignored)
-Token Count Report for: tokenizer/ (directory)
-
-Basic Statistics
-  Files: 14
-  Characters: 58,220
-  Words: 7,787
-  Lines: 2,197
-
-Token Counts by Method
-╭────────────────────────┬────────┬───────────╮
-│         Method         │ Tokens │ Accuracy  │
-├────────────────────────┼────────┼───────────┤
-│ cl100k_base            │ 16,859 │ Exact     │
-│ Claude (approx)        │ 15,315 │ Estimated │
-│ Gemini (approx)        │ 14,549 │ Approx    │
-│ o200k_base             │ 16,802 │ Exact     │
-│ Character-based (÷4.0) │ 14,555 │ Approx    │
-│ Word-based (×1.33)     │ 10,382 │ Approx    │
-│ Whitespace split       │  7,787 │ Approx    │
-╰────────────────────────┴────────┴───────────╯
+```bash
+tcount -r --verbose ./src
 ```
 
 When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Use `--verbose` to see file and skip statistics.
@@ -269,15 +237,15 @@ When scanning directories, tcount respects `.gitignore` rules, skips binary file
 $ tcount --json --model gpt-5 tokenizer.go
 {
   "file_path": "tokenizer.go",
-  "file_size": 7397,
-  "characters": 7397,
-  "words": 912,
-  "lines": 242,
+  "file_size": 8050,
+  "characters": 8050,
+  "words": 978,
+  "lines": 259,
   "methods": [
     {
       "name": "bpe_gpt_5",
       "display_name": "o200k_base (gpt-5)",
-      "tokens": 1839,
+      "tokens": 1976,
       "is_exact": true,
       "context_window": 400000
     }
@@ -344,9 +312,13 @@ ctx := context.Background()
 // Count tokens in a single file
 result, err := counter.CountFile(ctx, "document.md", "gpt-4o", false)
 
-// Count tokens across a directory (respects .gitignore, skips binaries)
+// Count tokens across a directory (respects .gitignore, skips binaries,
+// counts files in parallel and sums the results)
 result, err := counter.CountDirectory(ctx, "./src", "", true)
 fmt.Printf("Files: %d, Tokens: %d\n", result.FileCount, result.Methods[0].Tokens)
+
+// Count an explicit list of files with the same per-file summing
+result, err := counter.CountFiles(ctx, []string{"a.md", "b.md"}, "", true)
 ```
 
 ### Direct BPE Tokenizer Access
@@ -364,8 +336,8 @@ fmt.Printf("Tokens: %d, Exact: %v\n", count, tok.IsExact())
 ### Model Discovery
 
 ```go
-// Get metadata for a specific model
-meta := tokenizer.GetModelMetadata("gpt-4o")
+// Look up metadata for a specific model
+meta := tokenizer.LookupModel("gpt-4o")
 fmt.Printf("Encoding: %s, Context: %d\n", meta.Encoding, meta.ContextWindow)
 
 // List all registered models
