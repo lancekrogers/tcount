@@ -53,8 +53,7 @@ const TIOCGWINSZ = 0x40087468
 func TermWidth() int {
 	if cols := os.Getenv("COLUMNS"); cols != "" {
 		var width int
-		fmt.Sscanf(cols, "%d", &width)
-		if width > 0 {
+		if _, err := fmt.Sscanf(cols, "%d", &width); err == nil && width > 0 {
 			return width
 		}
 	}

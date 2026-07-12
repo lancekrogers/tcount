@@ -21,8 +21,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to create temp dir: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.RemoveAll(tmpDir)
-
 	bin := filepath.Join(tmpDir, "tcount")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
@@ -33,11 +31,14 @@ func TestMain(m *testing.M) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build tcount: %v\n%s\n", err, out)
+		_ = os.RemoveAll(tmpDir)
 		os.Exit(1)
 	}
 
 	binaryPath = bin
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.RemoveAll(tmpDir)
+	os.Exit(code)
 }
 
 // runTcount executes the tcount binary with the given arguments and returns

@@ -39,7 +39,7 @@ func Clean(verbose bool) error {
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 			}
-			cmd.Run()
+			_ = cmd.Run()
 			removed++
 		} else {
 			// Direct removal for specific files/directories
@@ -54,7 +54,7 @@ func Clean(verbose bool) error {
 	ui.ClearProgress()
 
 	// Also clean up any .test binaries in subdirectories
-	filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -66,8 +66,9 @@ func Clean(verbose bool) error {
 
 		// Remove .test files
 		if strings.HasSuffix(info.Name(), ".test") {
-			os.Remove(path)
-			removed++
+			if os.Remove(path) == nil {
+				removed++
+			}
 		}
 
 		return nil
