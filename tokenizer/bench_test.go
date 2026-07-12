@@ -36,6 +36,9 @@ func BenchmarkCounterCountAll_512KB(b *testing.B) {
 	}
 	text := benchText(512 << 10)
 	ctx := context.Background()
+	if _, err := c.Count(ctx, "warmup", "", true); err != nil {
+		b.Fatal(err)
+	}
 	b.SetBytes(int64(len(text)))
 	b.ReportAllocs()
 	for b.Loop() {
@@ -52,6 +55,9 @@ func BenchmarkCounterCountModelGPT5_512KB(b *testing.B) {
 	}
 	text := benchText(512 << 10)
 	ctx := context.Background()
+	if _, err := c.Count(ctx, "warmup", "gpt-5", false); err != nil {
+		b.Fatal(err)
+	}
 	b.SetBytes(int64(len(text)))
 	b.ReportAllocs()
 	for b.Loop() {
