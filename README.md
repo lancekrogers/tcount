@@ -236,30 +236,30 @@ Without `--vocab-file`, Llama models use a tiktoken-based approximation.
 ```
 $ tcount -r --verbose tokenizer/
 
-Found 11 text files (skipped 4 binary, 0 ignored)
+Found 14 text files (skipped 4 binary, 0 ignored)
 Token Count Report for: tokenizer/ (directory)
 
 Basic Statistics
-  Files: 11
-  Characters: 49,279
-  Words: 6,511
-  Lines: 1,841
+  Files: 14
+  Characters: 58,220
+  Words: 7,787
+  Lines: 2,197
 
 Token Counts by Method
 ╭────────────────────────┬────────┬───────────╮
 │         Method         │ Tokens │ Accuracy  │
 ├────────────────────────┼────────┼───────────┤
-│ cl100k_base            │ 14,301 │ Exact     │
-│ Claude (approx)        │ 12,968 │ Estimated │
-│ Gemini (approx)        │ 12,319 │ Approx    │
-│ o200k_base             │ 14,242 │ Exact     │
-│ Character-based (÷4.0) │ 12,319 │ Approx    │
-│ Word-based (×1.33)     │  8,681 │ Approx    │
-│ Whitespace split       │  6,511 │ Approx    │
+│ cl100k_base            │ 16,859 │ Exact     │
+│ Claude (approx)        │ 15,315 │ Estimated │
+│ Gemini (approx)        │ 14,549 │ Approx    │
+│ o200k_base             │ 16,802 │ Exact     │
+│ Character-based (÷4.0) │ 14,555 │ Approx    │
+│ Word-based (×1.33)     │ 10,382 │ Approx    │
+│ Whitespace split       │  7,787 │ Approx    │
 ╰────────────────────────┴────────┴───────────╯
 ```
 
-When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, and aggregates all text files into a combined count. Use `--verbose` to see file and skip statistics.
+When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Use `--verbose` to see file and skip statistics.
 
 ### JSON output
 

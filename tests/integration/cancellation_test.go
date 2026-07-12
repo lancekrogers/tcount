@@ -101,3 +101,46 @@ func TestIntegrationCancellation_CountFile(t *testing.T) {
 		t.Fatalf("CountFile() error = %v, want context.Canceled", err)
 	}
 }
+
+func TestIntegrationCountDirectory_PerFileSum(t *testing.T) {
+	ctx := context.Background()
+	counter, err := tokenizer.NewCounter(tokenizer.CounterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := fixturesDir(t) + "/walkdir"
+	walk, err := fileops.WalkDirectory(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dirResult, err := counter.CountDirectory(ctx, dir, "gpt-5", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sumTokens, sumWords, sumBytes := 0, 0, 0
+	for _, f := range walk.Files {
+		fr, err := counter.CountFile(ctx, f, "gpt-5", false)
+		if err != nil {
+			t.Fatalf("CountFile(%s): %v", f, err)
+		}
+		sumTokens += fr.Methods[0].Tokens
+		sumWords += fr.Words
+		sumBytes += fr.FileSize
+	}
+
+	if got := dirResult.Methods[0].Tokens; got != sumTokens {
+		t.Errorf("directory tokens = %d, want per-file sum %d", got, sumTokens)
+	}
+	if dirResult.Words != sumWords {
+		t.Errorf("directory words = %d, want per-file sum %d", dirResult.Words, sumWords)
+	}
+	if dirResult.FileSize != sumBytes {
+		t.Errorf("directory FileSize = %d, want per-file sum %d", dirResult.FileSize, sumBytes)
+	}
+	if dirResult.FileCount != len(walk.Files) {
+		t.Errorf("FileCount = %d, want %d", dirResult.FileCount, len(walk.Files))
+	}
+}

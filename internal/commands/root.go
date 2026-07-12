@@ -187,7 +187,7 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	}
 
 	var content []byte
-	var fileCount int
+	var walkFiles []string
 	isDirectory := info.IsDir()
 
 	if isDirectory {
@@ -209,18 +209,12 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 				len(walkResult.Files), walkResult.SkippedBinary, walkResult.SkippedIgnore)
 		}
 
-		content, err = fileops.AggregateFileContents(ctx, walkResult.Files)
-		if err != nil {
-			return errors.IO("reading files", err).WithField("path", path)
-		}
-
-		fileCount = len(walkResult.Files)
+		walkFiles = walkResult.Files
 	} else {
 		content, err = os.ReadFile(path)
 		if err != nil {
 			return errors.IO("reading file", err).WithField("path", path)
 		}
-		fileCount = 1
 	}
 
 	// Check if model requires SentencePiece and validate vocab-file flag
@@ -245,16 +239,20 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		return errors.Wrap(err, "creating token counter")
 	}
 
-	result, err := counter.Count(ctx, string(content), opts.model, opts.all)
+	var result *tokenizer.CountResult
+	if isDirectory {
+		result, err = counter.CountFiles(ctx, walkFiles, opts.model, opts.all)
+	} else {
+		result, err = counter.Count(ctx, string(content), opts.model, opts.all)
+	}
 	if err != nil {
 		return errors.Wrap(err, "counting tokens")
 	}
 
 	result.FilePath = path
-	result.FileSize = len(content)
 	result.IsDirectory = isDirectory
-	if isDirectory {
-		result.FileCount = fileCount
+	if !isDirectory {
+		result.FileSize = len(content)
 	}
 
 	if opts.jsonOutput {
