@@ -143,11 +143,9 @@ func Test(verbose bool) error {
 
 	success := pkgFailures == 0
 	// Choose appropriate title based on whether there are failures
-	title := "Test Summary"
+	title := "Tests Complete - All Passed"
 	if hasFailures {
 		title = "Test Failures"
-	} else {
-		title = "Tests Complete - All Passed"
 	}
 
 	// Use custom status messages for test results

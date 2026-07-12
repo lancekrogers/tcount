@@ -87,7 +87,9 @@ func Build(verbose bool) error {
 	start := time.Now()
 
 	// Create bin directory
-	os.MkdirAll("bin", 0o755)
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		return fmt.Errorf("creating bin directory: %w", err)
+	}
 
 	cmd := exec.Command("go", "build", "-ldflags", ldflags(), "-o", "bin/tcount", "./cmd/tcount")
 	if verbose {
@@ -161,11 +163,9 @@ func Build(verbose bool) error {
 	}
 
 	// Choose appropriate title based on whether there are failures
-	title := "Build Summary"
+	title := "Build Complete - No Errors"
 	if hasFailures {
 		title = "Build Failures"
-	} else {
-		title = "Build Complete - No Errors"
 	}
 
 	ui.SummaryCard(title, rows, fmt.Sprintf("%.2fs", totalTime.Seconds()), !hasFailures)

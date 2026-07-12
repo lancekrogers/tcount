@@ -55,13 +55,16 @@ func ExampleCounter_CountFile() {
 		fmt.Println("error:", err)
 		return
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 
 	if _, err := f.WriteString("Hello, world!"); err != nil {
 		fmt.Println("error:", err)
 		return
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		fmt.Println("error:", err)
+		return
+	}
 
 	counter, err := tokenizer.NewCounter(tokenizer.CounterOptions{})
 	if err != nil {
