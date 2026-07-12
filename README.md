@@ -243,21 +243,21 @@ Token Count Report for: tokenizer/ (directory)
 
 Basic Statistics
   Files: 14
-  Characters: 58,220
-  Words: 7,787
-  Lines: 2,197
+  Characters: 59,541
+  Words: 7,908
+  Lines: 2,237
 
 Token Counts by Method
 ╭────────────────────────┬────────┬───────────╮
 │         Method         │ Tokens │ Accuracy  │
 ├────────────────────────┼────────┼───────────┤
-│ cl100k_base            │ 16,859 │ Exact     │
-│ Claude (approx)        │ 15,315 │ Estimated │
-│ Gemini (approx)        │ 14,549 │ Approx    │
-│ o200k_base             │ 16,802 │ Exact     │
-│ Character-based (÷4.0) │ 14,555 │ Approx    │
-│ Word-based (×1.33)     │ 10,382 │ Approx    │
-│ Whitespace split       │  7,787 │ Approx    │
+│ cl100k_base            │ 17,150 │ Exact     │
+│ Claude (approx)        │ 15,663 │ Estimated │
+│ Gemini (approx)        │ 14,880 │ Approx    │
+│ o200k_base             │ 17,079 │ Exact     │
+│ Character-based (÷4.0) │ 14,885 │ Approx    │
+│ Word-based (×1.33)     │ 10,544 │ Approx    │
+│ Whitespace split       │  7,908 │ Approx    │
 ╰────────────────────────┴────────┴───────────╯
 ```
 
