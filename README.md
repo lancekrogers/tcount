@@ -6,13 +6,15 @@
 [![npm](https://img.shields.io/npm/v/@obedience-corp/tcount)](https://www.npmjs.com/package/@obedience-corp/tcount)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A fast, zero-network token counter for LLM workflows. Count tokens in files and directories using exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation — all from a single CLI.
+A fast token counter for LLM workflows that runs entirely on your machine: no API keys, no network calls, nothing leaves your disk. Count with exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation, from a single CLI or as a Go library.
 
 ![tcount demo: default method table, --model context usage, and a recursive directory scan](https://raw.githubusercontent.com/lancekrogers/tcount/main/docs/demo.gif)
 
 ## Features
 
-- **Exact BPE tokenization** — offline, no network calls. Supports GPT-5, GPT-4.1, GPT-4o, o-series, and legacy GPT-4/3.5.
+- **100% local** — counting never touches the network, so it is safe for private codebases, unreleased prompts, and air-gapped machines
+- **CLI and Go library** — the same engine ships as a command and as an importable package ([Library Usage](#library-usage))
+- **Exact BPE tokenization** — embedded vocabularies for GPT-5, GPT-4.1, GPT-4o, o-series, and legacy GPT-4/3.5
 - **Claude approximation** calibrated for Anthropic models
 - **Gemini approximation** for Google Gemini models
 - **SentencePiece** exact tokenization for Llama and other open-source models (bring your own `.model` file)
@@ -80,6 +82,17 @@ tcount -r ./src
 # JSON output for scripting
 tcount --json document.md
 ```
+
+Or import the same engine in Go:
+
+```go
+import "github.com/lancekrogers/tcount/tokenizer"
+
+counter, _ := tokenizer.NewCounter(tokenizer.CounterOptions{})
+result, _ := counter.CountFile(ctx, "prompt.md", "gpt-5", false)
+```
+
+Full API in [Library Usage](#library-usage).
 
 ## Supported Models
 

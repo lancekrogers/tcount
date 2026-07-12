@@ -3,6 +3,9 @@
 // It supports exact BPE tokenization for OpenAI models, character-based
 // approximation for Claude and Gemini models, and SentencePiece tokenization
 // for open-source models like Llama and Mistral.
+//
+// All counting runs locally from embedded vocabularies; no network access
+// is required or used.
 package tokenizer
 
 import (

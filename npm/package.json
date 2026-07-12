@@ -1,7 +1,7 @@
 {
   "name": "@obedience-corp/tcount",
   "version": "0.3.0",
-  "description": "Fast, zero-network token counter for LLM workflows (tcount CLI)",
+  "description": "Local token counter for LLM workflows: exact OpenAI BPE, Claude and Gemini estimates, context-window usage, zero network (tcount CLI)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/lancekrogers/tcount.git"
@@ -38,11 +38,20 @@
     "cli",
     "llm",
     "token",
+    "tokens",
+    "token-count",
+    "token-counter",
     "tokenizer",
     "tiktoken",
+    "bpe",
+    "openai",
+    "gpt",
     "claude",
+    "anthropic",
+    "gemini",
     "llama",
-    "count",
-    "cost-estimate"
+    "context-window",
+    "offline",
+    "local"
   ]
 }
