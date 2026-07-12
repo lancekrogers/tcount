@@ -76,8 +76,8 @@ tcount --all prompt.md
 # Filter by provider
 tcount --provider openai prompt.md
 
-# Recursive directory count
-tcount -r ./src
+# Count an entire directory tree
+tcount -d ./src
 
 # JSON output for scripting
 tcount --json document.md
@@ -225,8 +225,12 @@ Without `--vocab-file`, Llama models use a tiktoken-based approximation.
 
 ### Directory scanning
 
+Point tcount at a project directory to count every text file in one pass:
+
+![tcount directory demo: inspect a source tree with eza, then count the complete directory with tcount -d](docs/directory-demo.gif)
+
 ```bash
-tcount -r --verbose ./src
+tcount -d --verbose ./src
 ```
 
 When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Use `--verbose` to see file and skip statistics.
