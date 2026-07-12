@@ -8,6 +8,8 @@
 
 A fast, zero-network token counter for LLM workflows. Count tokens in files and directories using exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation — all from a single CLI.
 
+![tcount demo: default method table, --model context usage, and a recursive directory scan](https://raw.githubusercontent.com/lancekrogers/tcount/main/docs/demo.gif)
+
 ## Features
 
 - **Exact BPE tokenization** — offline, no network calls. Supports GPT-5, GPT-4.1, GPT-4o, o-series, and legacy GPT-4/3.5.
