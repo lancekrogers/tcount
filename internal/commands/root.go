@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -18,11 +19,6 @@ import (
 	"github.com/lancekrogers/tcount/tokenizer/fileops"
 )
 
-var (
-	noColor bool
-	verbose bool
-)
-
 type countOptions struct {
 	model         string
 	vocabFile     string
@@ -31,6 +27,8 @@ type countOptions struct {
 	jsonOutput    bool
 	showModels    bool
 	recursive     bool
+	noColor       bool
+	verbose       bool
 	charsPerToken float64
 	wordsPerToken float64
 }
@@ -75,7 +73,7 @@ When counting a directory with --recursive, the command:
   tcount -r --models ./project                             # Show encoding→model lookup`,
 		Args: cobra.ExactArgs(1),
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			if noColor {
+			if opts.noColor {
 				lipgloss.SetColorProfile(termenv.Ascii)
 			}
 		},
@@ -86,8 +84,15 @@ When counting a directory with --recursive, the command:
 		SilenceErrors: true,
 	}
 
-	cmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable color output")
-	cmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose output")
+	registerFlags(cmd, opts)
+
+	return cmd
+}
+
+// registerFlags binds every root-command flag to the countOptions fields.
+func registerFlags(cmd *cobra.Command, opts *countOptions) {
+	cmd.PersistentFlags().BoolVar(&opts.noColor, "no-color", false, "disable color output")
+	cmd.PersistentFlags().BoolVar(&opts.verbose, "verbose", false, "enable verbose output")
 
 	cmd.Flags().StringVar(&opts.model, "model", "", `specific model to use
 
@@ -121,23 +126,13 @@ Download vocab files from HuggingFace (see error messages for URLs)`)
 	cmd.Flags().BoolVarP(&opts.showModels, "models", "m", false, "show encoding-to-model lookup table")
 	cmd.Flags().BoolVarP(&opts.recursive, "recursive", "r", false, "recursively count tokens in directory")
 	cmd.Flags().BoolVarP(&opts.recursive, "directory", "d", false, "alias for --recursive")
-	cmd.Flags().Float64Var(&opts.charsPerToken, "chars-per-token", 4.0, "characters per token ratio")
-	cmd.Flags().Float64Var(&opts.wordsPerToken, "words-per-token", 0.75, "words per token ratio")
-
-	return cmd
+	cmd.Flags().Float64Var(&opts.charsPerToken, "chars-per-token", tokenizer.DefaultCharsPerToken, "characters per token ratio")
+	cmd.Flags().Float64Var(&opts.wordsPerToken, "words-per-token", tokenizer.DefaultWordsPerToken, "words per token ratio")
 }
 
 // isValidModel checks if a model name is valid using the tokenizer registry.
 func isValidModel(model string) bool {
-	if model == "" {
-		return true
-	}
-	for _, valid := range tokenizer.ListModels() {
-		if model == valid {
-			return true
-		}
-	}
-	return false
+	return model == "" || slices.Contains(tokenizer.ListModels(), model)
 }
 
 // sentencePieceVocabURLs maps model prefixes to their HuggingFace vocab download URLs.
@@ -148,12 +143,7 @@ var sentencePieceVocabURLs = map[string]string{
 
 // isValidProvider checks if a provider name is valid.
 func isValidProvider(provider string) bool {
-	for _, valid := range validProviders {
-		if provider == valid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(validProviders, provider)
 }
 
 // requiresSentencePiece checks if a model can use SentencePiece tokenization
@@ -171,62 +161,24 @@ func requiresSentencePiece(model string) (bool, string) {
 var validProviders = []string{"openai", "anthropic", "google", "meta", "deepseek", "alibaba", "microsoft", "all"}
 
 func runCount(ctx context.Context, path string, opts *countOptions) error {
-	display := ui.New(noColor, verbose)
+	display := ui.New(opts.noColor, opts.verbose)
 
 	if !isValidProvider(opts.provider) {
-		return fmt.Errorf("invalid provider %q, valid options: %s", opts.provider, strings.Join(validProviders, ", "))
+		return errors.Validation(fmt.Sprintf("invalid provider %q, valid options: %s",
+			opts.provider, strings.Join(validProviders, ", "))).WithField("provider", opts.provider)
 	}
 
 	if !isValidModel(opts.model) {
 		display.Warning("Unknown model '%s', using approximation methods", opts.model)
 	}
 
-	info, err := os.Stat(path)
+	content, walkFiles, isDirectory, err := resolveInput(ctx, path, opts, display)
 	if err != nil {
-		return errors.IO("accessing path", err).WithField("path", path)
+		return err
 	}
 
-	var content []byte
-	var walkFiles []string
-	isDirectory := info.IsDir()
-
-	if isDirectory {
-		if !opts.recursive {
-			return errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
-		}
-
-		walkResult, err := fileops.WalkDirectory(ctx, path)
-		if err != nil {
-			return errors.IO("walking directory", err).WithField("path", path)
-		}
-
-		if len(walkResult.Files) == 0 {
-			return errors.NotFound("text files in directory").WithField("path", path)
-		}
-
-		if verbose {
-			display.Info("Found %d text files (skipped %d binary, %d ignored)",
-				len(walkResult.Files), walkResult.SkippedBinary, walkResult.SkippedIgnore)
-		}
-
-		walkFiles = walkResult.Files
-	} else {
-		content, err = os.ReadFile(path)
-		if err != nil {
-			return errors.IO("reading file", err).WithField("path", path)
-		}
-	}
-
-	// Check if model requires SentencePiece and validate vocab-file flag
-	if needsSP, downloadURL := requiresSentencePiece(opts.model); needsSP && opts.vocabFile == "" {
-		return fmt.Errorf(
-			"model %s requires a SentencePiece vocab file\n\n"+
-				"Download the tokenizer.model file from:\n"+
-				"  %s\n\n"+
-				"Then run:\n"+
-				"  tcount --model %s --vocab-file /path/to/tokenizer.model <input>",
-			opts.model, downloadURL, opts.model,
-		)
+	if err := sentencePieceGuard(opts); err != nil {
+		return err
 	}
 
 	counter, err := tokenizer.NewCounter(tokenizer.CounterOptions{
@@ -259,7 +211,62 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		return outputJSON(result)
 	}
 
-	return outputTable(display, result, opts.showModels)
+	return outputTable(result, opts.showModels)
+}
+
+// resolveInput stats the path and loads the single file's content or walks
+// the directory for its file list.
+func resolveInput(ctx context.Context, path string, opts *countOptions, display *ui.UI) (content []byte, walkFiles []string, isDirectory bool, err error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, false, errors.IO("accessing path", err).WithField("path", path)
+	}
+
+	if !info.IsDir() {
+		content, err = os.ReadFile(path)
+		if err != nil {
+			return nil, nil, false, errors.IO("reading file", err).WithField("path", path)
+		}
+		return content, nil, false, nil
+	}
+
+	if !opts.recursive {
+		return nil, nil, true, errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
+	}
+
+	walkResult, err := fileops.WalkDirectory(ctx, path)
+	if err != nil {
+		return nil, nil, true, errors.IO("walking directory", err).WithField("path", path)
+	}
+
+	if len(walkResult.Files) == 0 {
+		return nil, nil, true, errors.NotFound("text files in directory").WithField("path", path)
+	}
+
+	if opts.verbose {
+		display.Info("Found %d text files (skipped %d binary, %d ignored)",
+			len(walkResult.Files), walkResult.SkippedBinary, walkResult.SkippedIgnore)
+	}
+
+	return nil, walkResult.Files, true, nil
+}
+
+// sentencePieceGuard rejects models that require a SentencePiece vocab file
+// when --vocab-file was not provided.
+func sentencePieceGuard(opts *countOptions) error {
+	needsSP, downloadURL := requiresSentencePiece(opts.model)
+	if !needsSP || opts.vocabFile != "" {
+		return nil
+	}
+
+	return errors.Validation(fmt.Sprintf(
+		"model %s requires a SentencePiece vocab file\n\n"+
+			"Download the tokenizer.model file from:\n"+
+			"  %s\n\n"+
+			"Then run:\n"+
+			"  tcount --model %s --vocab-file /path/to/tokenizer.model <input>",
+		opts.model, downloadURL, opts.model,
+	)).WithField("model", opts.model)
 }
 
 func outputJSON(result *tokenizer.CountResult) error {
@@ -280,10 +287,27 @@ func styles() (title, section, label, valStyle lipgloss.Style) {
 	return
 }
 
-func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error {
+func outputTable(result *tokenizer.CountResult, showModels bool) error {
+	_, sectionStyle, labelStyle, _ := styles()
+
+	printReportHeader(result)
+
+	rows, showContext := methodRows(result)
+	fmt.Println(sectionStyle.Render("Token Counts by Method"))
+	fmt.Println(renderMethodTable(rows, showContext))
+
+	if showModels {
+		fmt.Println()
+		outputModelLookup(sectionStyle, labelStyle)
+	}
+
+	return nil
+}
+
+// printReportHeader prints the report title and the basic statistics block.
+func printReportHeader(result *tokenizer.CountResult) {
 	titleStyle, sectionStyle, labelStyle, valStyle := styles()
 
-	// Title
 	path := result.FilePath
 	if result.IsDirectory {
 		path += " (directory)"
@@ -291,7 +315,6 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 	fmt.Println(titleStyle.Render("Token Count Report for: " + path))
 	fmt.Println()
 
-	// Basic Statistics
 	fmt.Println(sectionStyle.Render("Basic Statistics"))
 	if result.IsDirectory {
 		fmt.Printf("  %s %s\n", labelStyle.Render("Files:"), valStyle.Render(formatInt(result.FileCount)))
@@ -300,9 +323,11 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 	fmt.Printf("  %s %s\n", labelStyle.Render("Words:"), valStyle.Render(formatInt(result.Words)))
 	fmt.Printf("  %s %s\n", labelStyle.Render("Lines:"), valStyle.Render(formatInt(result.Lines)))
 	fmt.Println()
+}
 
-	// Context usage is only shown when a specific --model attaches a context
-	// window to its method(s).
+// methodRows builds the token table rows. The second return reports whether
+// any method carries a context window, which adds the Context Usage column.
+func methodRows(result *tokenizer.CountResult) ([][]string, bool) {
 	showContext := false
 	for _, method := range result.Methods {
 		if method.ContextWindow > 0 {
@@ -311,13 +336,12 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 		}
 	}
 
-	// Build token table rows
 	rows := make([][]string, 0, len(result.Methods))
 	for _, method := range result.Methods {
 		accuracy := "Approx"
 		if method.IsExact {
 			accuracy = "Exact"
-		} else if method.Name == "claude_3_approx" {
+		} else if method.Name == tokenizer.NameClaudeApprox {
 			accuracy = "Estimated"
 		}
 		row := []string{method.DisplayName, formatInt(method.Tokens), accuracy}
@@ -327,7 +351,11 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 		rows = append(rows, row)
 	}
 
-	// Styled table
+	return rows, showContext
+}
+
+// renderMethodTable renders the styled token table.
+func renderMethodTable(rows [][]string, showContext bool) *table.Table {
 	purple := lipgloss.Color("99")
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(purple).Align(lipgloss.Center)
 	cellStyle := lipgloss.NewStyle().PaddingLeft(1).PaddingRight(1)
@@ -338,7 +366,7 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 		headers = append(headers, "Context Usage")
 	}
 
-	t := table.New().
+	return table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(purple)).
 		Headers(headers...).
@@ -364,17 +392,6 @@ func outputTable(_ *ui.UI, result *tokenizer.CountResult, showModels bool) error
 			}
 			return cellStyle
 		})
-
-	fmt.Println(sectionStyle.Render("Token Counts by Method"))
-	fmt.Println(t)
-
-	// Model lookup
-	if showModels {
-		fmt.Println()
-		outputModelLookup(sectionStyle, labelStyle)
-	}
-
-	return nil
 }
 
 // formatInt formats an integer with comma thousand separators.
@@ -444,7 +461,7 @@ func outputModelLookup(sectionStyle, labelStyle lipgloss.Style) {
 
 	byEncoding := tokenizer.ModelsByEncoding()
 
-	order := []string{"o200k_base", "cl100k_base", "claude_approx", "gemini_approx"}
+	order := []string{tokenizer.EncodingO200kBase, tokenizer.EncodingCL100kBase, tokenizer.EncodingClaudeApprox, tokenizer.EncodingGeminiApprox}
 	for _, enc := range order {
 		models, ok := byEncoding[enc]
 		if !ok {

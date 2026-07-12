@@ -30,10 +30,10 @@ type Counter struct {
 // Returns an error if the BPE tokenizers fail to initialize.
 func NewCounter(opts CounterOptions) (*Counter, error) {
 	if opts.CharsPerToken == 0 {
-		opts.CharsPerToken = 4.0
+		opts.CharsPerToken = DefaultCharsPerToken
 	}
 	if opts.WordsPerToken == 0 {
-		opts.WordsPerToken = 0.75
+		opts.WordsPerToken = DefaultWordsPerToken
 	}
 
 	c := &Counter{
@@ -337,7 +337,7 @@ func (c *Counter) planMethods(model string, all bool) ([]methodPlan, bool, error
 		return plans, true, nil
 	}
 
-	meta := GetModelMetadata(model)
+	meta := LookupModel(model)
 	if meta != nil {
 		tok, err := c.tokenizerForEncoding(meta.Encoding)
 		if err != nil {
@@ -407,13 +407,13 @@ func spmPlanned(plans []methodPlan) bool {
 // encodingMatchesProvider checks if an encoding should be included for a provider filter.
 func encodingMatchesProvider(encoding string, provider Provider) bool {
 	switch encoding {
-	case "o200k_base":
+	case EncodingO200kBase:
 		return provider == ProviderOpenAI
-	case "cl100k_base":
+	case EncodingCL100kBase:
 		return provider == ProviderOpenAI || provider == ProviderMeta || provider == ProviderDeepSeek || provider == ProviderAlibaba || provider == ProviderMicrosoft
-	case "claude_approx":
+	case EncodingClaudeApprox:
 		return provider == ProviderAnthropic
-	case "gemini_approx":
+	case EncodingGeminiApprox:
 		return provider == ProviderGoogle
 	}
 	return false
@@ -451,22 +451,22 @@ func (c *Counter) approximationsFromTotals(chars, words int) []MethodResult {
 // tokenizers parse multi-megabyte vocab tables, so they load lazily via
 // bpeTokenizer the first time an encoding is actually counted with.
 func (c *Counter) initializeTokenizers() error {
-	c.tokenizers["claude_approx"] = NewClaudeApproximator()
-	c.tokenizers["gemini_approx"] = NewGeminiApproximator()
+	c.tokenizers[EncodingClaudeApprox] = NewClaudeApproximator()
+	c.tokenizers[EncodingGeminiApprox] = NewGeminiApproximator()
 
 	if c.vocabFile != "" {
 		tok, err := NewSPMTokenizer(c.vocabFile)
 		if err != nil {
 			return fmt.Errorf("loading SentencePiece vocab %q: %w", c.vocabFile, err)
 		}
-		c.tokenizers["spm"] = tok
+		c.tokenizers[EncodingSPM] = tok
 	}
 
 	return nil
 }
 
 // bpeEncodings are the encodings loaded on demand by bpeTokenizer.
-var bpeEncodings = []string{"o200k_base", "cl100k_base"}
+var bpeEncodings = []string{EncodingO200kBase, EncodingCL100kBase}
 
 // bpeTokenizer returns the tokenizer for a BPE encoding, loading and caching
 // it on first use.

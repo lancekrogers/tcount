@@ -14,6 +14,25 @@ import (
 	"github.com/lancekrogers/tcount/tokenizer/bpe"
 )
 
+// Encoding identifiers shared across the tokenizer and CLI layers.
+const (
+	EncodingO200kBase    = bpe.EncodingO200kBase
+	EncodingCL100kBase   = bpe.EncodingCL100kBase
+	EncodingClaudeApprox = "claude_approx"
+	EncodingGeminiApprox = "gemini_approx"
+	EncodingSPM          = "spm"
+)
+
+// NameClaudeApprox is the machine-readable identifier the Claude
+// approximator reports; consumers key accuracy labeling off it.
+const NameClaudeApprox = "claude_3_approx"
+
+// Default approximation ratios applied when CounterOptions leaves them zero.
+const (
+	DefaultCharsPerToken = 4.0
+	DefaultWordsPerToken = 0.75
+)
+
 // Tokenizer counts tokens in text using a specific tokenization method.
 type Tokenizer interface {
 	// CountTokens returns the token count for the given text.
@@ -138,7 +157,7 @@ func (c *ClaudeApproximator) CountTokens(text string) (int, error) {
 
 // Name returns the machine-readable tokenizer identifier.
 func (c *ClaudeApproximator) Name() string {
-	return "claude_3_approx"
+	return NameClaudeApprox
 }
 
 // DisplayName returns the human-readable tokenizer name.
@@ -174,7 +193,7 @@ func (g *GeminiApproximator) CountTokens(text string) (int, error) {
 
 // Name returns the machine-readable tokenizer identifier.
 func (g *GeminiApproximator) Name() string {
-	return "gemini_approx"
+	return EncodingGeminiApprox
 }
 
 // DisplayName returns the human-readable tokenizer name.
@@ -204,12 +223,12 @@ func NewSPMTokenizer(modelPath string) (Tokenizer, error) {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("vocab file not found: %s", modelPath)
 		}
-		return nil, fmt.Errorf("failed to access vocab file: %w", err)
+		return nil, fmt.Errorf("accessing vocab file: %w", err)
 	}
 
 	processor, err := sentencepiece.NewProcessorFromPath(modelPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load SentencePiece model: %w", err)
+		return nil, fmt.Errorf("loading SentencePiece model: %w", err)
 	}
 
 	return &SPMTokenizerWrapper{
@@ -226,7 +245,7 @@ func (t *SPMTokenizerWrapper) CountTokens(text string) (int, error) {
 
 // Name returns the machine-readable tokenizer identifier.
 func (t *SPMTokenizerWrapper) Name() string {
-	return "spm"
+	return EncodingSPM
 }
 
 // DisplayName returns the human-readable tokenizer name.

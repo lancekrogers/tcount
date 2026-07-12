@@ -84,7 +84,7 @@ func initDefinition(encodingName string) (*Definition, error) {
 }
 
 func o200kBase() (*Definition, error) {
-	ranks, err := loadEmbeddedVocab("o200k_base")
+	ranks, err := loadEmbeddedVocab(EncodingO200kBase)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func o200kBase() (*Definition, error) {
 }
 
 func cl100kBase() (*Definition, error) {
-	ranks, err := loadEmbeddedVocab("cl100k_base")
+	ranks, err := loadEmbeddedVocab(EncodingCL100kBase)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func cl100kBase() (*Definition, error) {
 }
 
 func p50kBase() (*Definition, error) {
-	ranks, err := loadEmbeddedVocab("p50k_base")
+	ranks, err := loadEmbeddedVocab(EncodingP50kBase)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func p50kBase() (*Definition, error) {
 }
 
 func p50kEdit() (*Definition, error) {
-	ranks, err := loadEmbeddedVocab("p50k_base")
+	ranks, err := loadEmbeddedVocab(EncodingP50kBase)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func p50kEdit() (*Definition, error) {
 }
 
 func r50kBase() (*Definition, error) {
-	ranks, err := loadEmbeddedVocab("r50k_base")
+	ranks, err := loadEmbeddedVocab(EncodingR50kBase)
 	if err != nil {
 		return nil, err
 	}
