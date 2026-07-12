@@ -242,13 +242,20 @@ var modelRegistry = map[string]ModelMetadata{
 	},
 }
 
-// GetModelMetadata retrieves metadata for a given model name.
+// LookupModel retrieves metadata for a given model name.
 // Returns nil if model is not found in the registry.
-func GetModelMetadata(modelName string) *ModelMetadata {
+func LookupModel(modelName string) *ModelMetadata {
 	if meta, ok := modelRegistry[modelName]; ok {
 		return &meta
 	}
 	return nil
+}
+
+// GetModelMetadata retrieves metadata for a given model name.
+//
+// Deprecated: use LookupModel.
+func GetModelMetadata(modelName string) *ModelMetadata {
+	return LookupModel(modelName)
 }
 
 // ListModels returns all registered model names in sorted order.
@@ -275,19 +282,26 @@ func ListModelsByProvider(provider Provider) []ModelMetadata {
 	return models
 }
 
-// GetProviderForModel returns the provider for a given model name.
+// ProviderForModel returns the provider for a given model name.
 // Returns empty string if model is not registered.
-func GetProviderForModel(modelName string) Provider {
-	if meta := GetModelMetadata(modelName); meta != nil {
+func ProviderForModel(modelName string) Provider {
+	if meta := LookupModel(modelName); meta != nil {
 		return meta.Provider
 	}
 	return ""
 }
 
+// GetProviderForModel returns the provider for a given model name.
+//
+// Deprecated: use ProviderForModel.
+func GetProviderForModel(modelName string) Provider {
+	return ProviderForModel(modelName)
+}
+
 // IsOpenSourceModel returns true if the model is from an open-source provider
 // (not OpenAI, Anthropic, or Google).
 func IsOpenSourceModel(modelName string) bool {
-	provider := GetProviderForModel(modelName)
+	provider := ProviderForModel(modelName)
 	return provider != "" &&
 		provider != ProviderOpenAI &&
 		provider != ProviderAnthropic &&

@@ -40,6 +40,10 @@ var binaryExtensions = map[string]bool{
 	".tiktoken": true,
 }
 
+// binarySniffBytes is the prefix window scanned for null bytes, matching the
+// convention used by git and http.DetectContentType.
+const binarySniffBytes = 512
+
 // IsBinaryFile checks if a file is likely binary.
 func IsBinaryFile(path string) (bool, error) {
 	ext := strings.ToLower(filepath.Ext(path))
@@ -53,7 +57,7 @@ func IsBinaryFile(path string) (bool, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	buf := make([]byte, 512)
+	buf := make([]byte, binarySniffBytes)
 	n, err := file.Read(buf)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
