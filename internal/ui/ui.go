@@ -28,3 +28,12 @@ func (u *UI) Info(format string, args ...any) {
 func (u *UI) Warning(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "Warning: "+format+"\n", args...)
 }
+
+// Diagnostic prints verbose instrumentation to stderr so normal stdout output
+// remains stable for both table and JSON consumers.
+func (u *UI) Diagnostic(format string, args ...any) {
+	if !u.verbose {
+		return
+	}
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}

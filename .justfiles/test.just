@@ -32,3 +32,22 @@ coverage-html:
 # Run benchmarks
 bench:
     go test ./... -bench=. -benchmem
+
+container-image:
+    docker build --file tests/container/Dockerfile --tag tcount-test:local .
+
+# Run all tests in the filesystem-isolated container harness.
+container: container-image
+    docker run --rm tcount-test:local test
+
+# Run deterministic directory benchmarks. Use `just test cache-bench all 5` to include the 1 GiB tier.
+cache-bench tiers="small,medium" samples="5": container-image
+    docker run --rm tcount-test:local bench --tiers "{{tiers}}" --samples "{{samples}}"
+
+# Compare metadata and verified validation without rerunning tokenization.
+cache-validate tiers="small,medium" samples="5": container-image
+    docker run --rm tcount-test:local validation --tiers "{{tiers}}" --samples "{{samples}}"
+
+# Benchmark bounded manifest encode/decode/merge/atomic-write at all tiers.
+manifest-bench tiers="small,medium,large" samples="3": container-image
+    docker run --rm tcount-test:local manifest --tiers "{{tiers}}" --samples "{{samples}}"

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	gitignore "github.com/sabhiram/go-gitignore"
 )
@@ -21,9 +22,21 @@ type WalkResult struct {
 
 // WalkDirectory recursively walks a directory, respecting .gitignore files
 // and filtering out binary files.
-func WalkDirectory(ctx context.Context, rootPath string) (*WalkResult, error) {
+func WalkDirectory(ctx context.Context, rootPath string, collectors ...WalkStatsCollector) (*WalkResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+
+	var collector WalkStatsCollector
+	if len(collectors) > 0 {
+		collector = collectors[0]
+	}
+	var walkStarted time.Time
+	if collector != nil {
+		walkStarted = time.Now()
+		defer func() {
+			collector.RecordWalkDuration(time.Since(walkStarted))
+		}()
 	}
 
 	result := &WalkResult{
@@ -40,6 +53,9 @@ func WalkDirectory(ctx context.Context, rootPath string) (*WalkResult, error) {
 	}
 
 	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+		if collector != nil && info != nil {
+			collector.RecordEntryVisited()
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -67,7 +83,12 @@ func WalkDirectory(ctx context.Context, rootPath string) (*WalkResult, error) {
 			return nil
 		}
 
-		isBinary, err := IsBinaryFile(path)
+		var isBinary bool
+		if collector != nil {
+			isBinary, err = IsBinaryFile(path, collector)
+		} else {
+			isBinary, err = IsBinaryFile(path)
+		}
 		if err != nil {
 			result.SkippedBinary++
 			return nil
@@ -78,6 +99,9 @@ func WalkDirectory(ctx context.Context, rootPath string) (*WalkResult, error) {
 		}
 
 		result.Files = append(result.Files, path)
+		if collector != nil {
+			collector.RecordEligibleFile()
+		}
 		return nil
 	})
 

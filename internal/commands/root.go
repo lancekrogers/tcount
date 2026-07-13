@@ -29,6 +29,7 @@ type countOptions struct {
 	recursive     bool
 	noColor       bool
 	verbose       bool
+	stats         *tokenizer.Stats
 	charsPerToken float64
 	wordsPerToken float64
 }
@@ -162,6 +163,9 @@ var validProviders = []string{"openai", "anthropic", "google", "meta", "deepseek
 
 func runCount(ctx context.Context, path string, opts *countOptions) error {
 	display := ui.New(opts.noColor, opts.verbose)
+	if opts.verbose {
+		opts.stats = tokenizer.NewStats()
+	}
 
 	if !isValidProvider(opts.provider) {
 		return errors.Validation(fmt.Sprintf("invalid provider %q, valid options: %s",
@@ -186,6 +190,7 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		WordsPerToken: opts.wordsPerToken,
 		VocabFile:     opts.vocabFile,
 		Provider:      tokenizer.Provider(opts.provider),
+		Stats:         opts.stats,
 	})
 	if err != nil {
 		return errors.Wrap(err, "creating token counter")
@@ -205,6 +210,8 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	result.IsDirectory = isDirectory
 	if !isDirectory {
 		result.FileSize = len(content)
+	} else if opts.stats != nil {
+		outputStats(display, opts.stats.Snapshot())
 	}
 
 	if opts.jsonOutput {
@@ -234,7 +241,12 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, display 
 		return nil, nil, true, errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
 	}
 
-	walkResult, err := fileops.WalkDirectory(ctx, path)
+	var walkResult *fileops.WalkResult
+	if opts.stats != nil {
+		walkResult, err = fileops.WalkDirectory(ctx, path, opts.stats)
+	} else {
+		walkResult, err = fileops.WalkDirectory(ctx, path)
+	}
 	if err != nil {
 		return nil, nil, true, errors.IO("walking directory", err).WithField("path", path)
 	}
@@ -249,6 +261,10 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, display 
 	}
 
 	return nil, walkResult.Files, true, nil
+}
+
+func outputStats(display *ui.UI, stats tokenizer.StatsSnapshot) {
+	display.Diagnostic("Instrumentation: entries=%d eligible=%d sniff_opens=%d sniff_bytes=%d full_opens=%d full_bytes=%d tokenized=%v walk=%s validation_read=%s tokenization=%s aggregation=%s persistence_ready=%s peak_heap_alloc=%d", stats.EntriesVisited, stats.EligibleFiles, stats.BinarySniffOpens, stats.BinarySniffBytes, stats.FullFileOpens, stats.FullFileBytes, stats.FilesTokenizedByMethod, stats.WalkDuration, stats.ValidationReadDuration, stats.TokenizationDuration, stats.AggregationDuration, stats.PersistenceReadyDuration, stats.PeakHeapAllocBytes)
 }
 
 // sentencePieceGuard rejects models that require a SentencePiece vocab file
