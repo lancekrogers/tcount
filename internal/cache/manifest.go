@@ -60,7 +60,7 @@ func DecodeManifest(data []byte) (Manifest, error) {
 		return Manifest{}, err
 	}
 	if version != CurrentSchemaVersion {
-		return Manifest{}, fmt.Errorf("unsupported manifest schema version %d", version)
+		return Manifest{}, fmt.Errorf("%w: unsupported manifest schema version %d", ErrCacheIncompatible, version)
 	}
 	root, err := reader.string(MaxManifestRoot)
 	if err != nil {
@@ -165,6 +165,9 @@ func WriteManifestAtomic(ctx context.Context, path string, manifest Manifest) er
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("closing manifest: %w", err)
 	}
+	if err := runManifestTestHook(ctx, path, temporaryPath); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -193,12 +196,16 @@ func LoadManifest(ctx context.Context, path string) (Manifest, error) {
 	if err := ctx.Err(); err != nil {
 		return Manifest{}, err
 	}
-	return DecodeManifest(data)
+	manifest, err := DecodeManifest(data)
+	if err == nil || errors.Is(err, ErrCacheIncompatible) {
+		return manifest, err
+	}
+	return Manifest{}, fmt.Errorf("%w: %w", ErrCacheCorrupt, err)
 }
 
 func validateManifest(manifest Manifest) error {
 	if manifest.SchemaVersion != CurrentSchemaVersion {
-		return fmt.Errorf("unsupported manifest schema version %d", manifest.SchemaVersion)
+		return fmt.Errorf("%w: unsupported manifest schema version %d", ErrCacheIncompatible, manifest.SchemaVersion)
 	}
 	if len(manifest.Root) == 0 || uint64(len(manifest.Root)) > uint64(MaxManifestRoot) {
 		return errors.New("manifest root is empty or too long")

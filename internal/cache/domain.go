@@ -3,6 +3,8 @@ package cache
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"time"
 )
 
 // FileClassification records the classification associated with the stored bytes.
@@ -83,10 +85,131 @@ type Manifest = Snapshot
 
 // Status is the non-persistent store status for one canonical root.
 type Status struct {
-	Root       string
-	Present    bool
-	Generation uint64
-	Entries    int
+	Root          string
+	Present       bool
+	Failure       CacheFailureKind
+	SchemaVersion uint32
+	Generation    uint64
+	Entries       int
+	Bytes         int64
+	ModifiedAt    time.Time
+	Age           time.Duration
+}
+
+// CacheFailureKind is the diagnostic class for a cache operation. None of
+// these failures should replace a correctly computed count with an error.
+type CacheFailureKind string
+
+const (
+	FailureNone         CacheFailureKind = ""
+	FailureAbsent       CacheFailureKind = "absent"
+	FailureCorrupt      CacheFailureKind = "corrupt"
+	FailureIncompatible CacheFailureKind = "incompatible"
+	FailurePermission   CacheFailureKind = "permission"
+	FailureLock         CacheFailureKind = "lock"
+	FailurePersistence  CacheFailureKind = "persistence"
+)
+
+var (
+	ErrCacheAbsent       = errors.New("cache state absent")
+	ErrCacheCorrupt      = errors.New("cache state corrupt")
+	ErrCacheIncompatible = errors.New("cache state incompatible")
+	ErrCachePermission   = errors.New("cache permission failure")
+	ErrCacheLock         = errors.New("cache lock failure")
+	ErrCachePersistence  = errors.New("cache persistence failure")
+	ErrPruneNotApproved  = errors.New("cache prune requires a successful full walk")
+)
+
+// CacheError preserves the underlying error while exposing a stable
+// diagnostic category to callers and future CLI reporting.
+type CacheError struct {
+	Category  CacheFailureKind
+	Operation string
+	Path      string
+	Err       error
+}
+
+func (err *CacheError) Error() string {
+	if err == nil {
+		return "<nil>"
+	}
+	return string(err.Category) + " cache " + err.Operation + " at " + err.Path + ": " + err.Err.Error()
+}
+
+func (err *CacheError) Unwrap() error { return err.Err }
+
+func (err *CacheError) Is(target error) bool {
+	if target == failureSentinel(err.Category) {
+		return true
+	}
+	return errors.Is(err.Err, target)
+}
+
+// CacheFailureOf extracts a stable diagnostic class without requiring callers
+// to depend on the concrete persistence error type.
+func CacheFailureOf(err error) CacheFailureKind {
+	var cacheErr *CacheError
+	if errors.As(err, &cacheErr) {
+		return cacheErr.Category
+	}
+	return FailureNone
+}
+
+func failureSentinel(category CacheFailureKind) error {
+	switch category {
+	case FailureAbsent:
+		return ErrCacheAbsent
+	case FailureCorrupt:
+		return ErrCacheCorrupt
+	case FailureIncompatible:
+		return ErrCacheIncompatible
+	case FailurePermission:
+		return ErrCachePermission
+	case FailureLock:
+		return ErrCacheLock
+	case FailurePersistence:
+		return ErrCachePersistence
+	default:
+		return nil
+	}
+}
+
+func classifyCacheFailure(operation, path string, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	var cacheErr *CacheError
+	if errors.As(err, &cacheErr) {
+		return err
+	}
+	category := FailurePersistence
+	switch {
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, ErrSnapshotNotFound):
+		category = FailureAbsent
+	case errors.Is(err, ErrCacheIncompatible):
+		category = FailureIncompatible
+	case errors.Is(err, ErrCacheCorrupt), errors.Is(err, ErrLocationCollision):
+		category = FailureCorrupt
+	case errors.Is(err, fs.ErrPermission):
+		category = FailurePermission
+	case errors.Is(err, ErrLockUnsupported):
+		category = FailureLock
+	}
+	return &CacheError{Category: category, Operation: operation, Path: path, Err: err}
+}
+
+func classifyLockFailure(operation, path string, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	var cacheErr *CacheError
+	if errors.As(err, &cacheErr) {
+		return err
+	}
+	if errors.Is(err, fs.ErrPermission) || errors.Is(err, ErrLockUnsupported) {
+		return classifyCacheFailure(operation, path, err)
+	}
+	return &CacheError{Category: FailureLock, Operation: operation, Path: path, Err: err}
 }
 
 // Store is the narrow persistence boundary used by counting code. A cache
@@ -111,6 +234,8 @@ var (
 	ErrInvalidationRequest = errors.New("invalid invalidation request")
 	ErrAggregateOverflow   = errors.New("aggregate exceeds numeric limits")
 	ErrInvalidAggregate    = errors.New("invalid aggregate input")
+	ErrLocationCollision   = errors.New("cache location root mismatch")
+	ErrLockUnsupported     = errors.New("cache writer lock unsupported on this platform")
 )
 
 func validateCanonicalRoot(root string) error {

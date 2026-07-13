@@ -83,7 +83,7 @@ func (store *MemoryStore) Status(ctx context.Context, root string) (Status, erro
 	if !ok {
 		return Status{Root: root}, nil
 	}
-	return Status{Root: root, Present: true, Generation: snapshot.Generation, Entries: len(snapshot.Entries)}, nil
+	return Status{Root: root, Present: true, SchemaVersion: snapshot.SchemaVersion, Generation: snapshot.Generation, Entries: len(snapshot.Entries)}, nil
 }
 
 // Clear removes a root snapshot. Clearing an absent root is intentionally

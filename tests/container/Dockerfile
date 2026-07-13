@@ -20,4 +20,12 @@ RUN mkdir -p /workspace/bin \
     && go build -o /workspace/bin/cache-manifest-bench ./tests/cachefs/manifestbench \
     && chmod +x /workspace/tests/container/run.sh
 
+RUN useradd --create-home --uid 10001 tcounttest \
+    && mkdir -p /tmp/tcount-home /tmp/tcount-gocache \
+    && chown -R tcounttest:tcounttest /tmp/tcount-home /tmp/tcount-gocache
+
+ENV HOME=/tmp/tcount-home
+ENV GOCACHE=/tmp/tcount-gocache
+USER tcounttest
+
 ENTRYPOINT ["/workspace/tests/container/run.sh"]
