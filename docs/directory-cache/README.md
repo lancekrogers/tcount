@@ -82,3 +82,6 @@ content-exact, the manifest format is versioned and internal, and the feature
 is not enabled by default. Use `--cache-verify` when correctness is more
 important than avoiding validation reads, and treat `cache status` as the
 supported way to inspect state rather than depending on manifest internals.
+
+See [the rollout decision](rollout-decision.md) for the accepted backend,
+validation, default-behavior, and follow-up decisions.
