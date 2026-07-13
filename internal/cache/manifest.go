@@ -23,47 +23,6 @@ const (
 	MaxManifestRoot      uint32 = 4096
 )
 
-// FileClassification records the classification associated with the stored bytes.
-type FileClassification uint8
-
-const (
-	ClassificationText FileClassification = iota + 1
-	ClassificationBinary
-)
-
-// ContractKey identifies the exact tokenizer contract represented by a method value.
-type ContractKey struct {
-	Method              string
-	Encoding            string
-	Implementation      string
-	VocabularyDigest    string
-	NormalizationPolicy string
-	SpecialTokenPolicy  string
-}
-
-// FileEntry is the bounded logical value stored for one normalized path.
-type FileEntry struct {
-	Size           int64
-	ModTimeNS      int64
-	ContentDigest  [32]byte
-	Classification FileClassification
-	Characters     int
-	Words          int
-	Lines          int
-	Methods        map[ContractKey]int
-}
-
-// Manifest is the complete per-root snapshot used by the storage prototype.
-type Manifest struct {
-	SchemaVersion uint32
-	Root          string
-	Generation    uint64
-	Entries       map[string]FileEntry
-}
-
-// UpdateSet contains complete per-file values to merge into a manifest.
-type UpdateSet map[string]FileEntry
-
 // EncodeManifest serializes a deterministic, bounded binary manifest.
 func EncodeManifest(manifest Manifest) ([]byte, error) {
 	if err := validateManifest(manifest); err != nil {
@@ -149,7 +108,7 @@ func MergeEntries(base Manifest, updates UpdateSet) (Manifest, error) {
 	}
 	merged := Manifest{SchemaVersion: base.SchemaVersion, Root: base.Root, Generation: base.Generation + 1, Entries: make(map[string]FileEntry, len(base.Entries)+len(updates))}
 	for path, entry := range base.Entries {
-		merged.Entries[path] = cloneFileEntry(entry)
+		merged.Entries[path] = cloneFileResult(entry)
 	}
 	for path, entry := range updates {
 		if err := validatePath(path); err != nil {
@@ -158,7 +117,11 @@ func MergeEntries(base Manifest, updates UpdateSet) (Manifest, error) {
 		if err := validateFileEntry(entry); err != nil {
 			return Manifest{}, fmt.Errorf("update %q: %w", path, err)
 		}
-		merged.Entries[path] = cloneFileEntry(entry)
+		if previous, exists := merged.Entries[path]; exists {
+			merged.Entries[path] = mergeFileResult(previous, entry)
+		} else {
+			merged.Entries[path] = cloneFileResult(entry)
+		}
 	}
 	return merged, nil
 }
@@ -402,17 +365,6 @@ func contractKeyLess(left, right ContractKey) bool {
 		return leftValues[i] < rightValues[i]
 	}
 	return false
-}
-
-func cloneFileEntry(entry FileEntry) FileEntry {
-	if entry.Methods == nil {
-		return entry
-	}
-	entry.Methods = make(map[ContractKey]int, len(entry.Methods))
-	for key, tokens := range entry.Methods {
-		entry.Methods[key] = tokens
-	}
-	return entry
 }
 
 type manifestWriter struct {

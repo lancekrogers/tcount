@@ -85,6 +85,24 @@ func TestMergeEntriesDoesNotAliasMethods(t *testing.T) {
 	}
 }
 
+func TestMergeEntriesPreservesPartialMethodHits(t *testing.T) {
+	base := benchmarkManifest(1)
+	path := "pkg/file-000000.txt"
+	update := base.Entries[path]
+	update.Methods = map[ContractKey]int{{Method: "new-contract"}: 17}
+
+	merged, err := MergeEntries(base, UpdateSet{path: update})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(merged.Entries[path].Methods); got != len(base.Entries[path].Methods)+1 {
+		t.Fatalf("merged method count = %d, want %d", got, len(base.Entries[path].Methods)+1)
+	}
+	if got := merged.Entries[path].Methods[ContractKey{Method: "new-contract"}]; got != 17 {
+		t.Fatalf("new method count = %d, want 17", got)
+	}
+}
+
 func benchmarkManifest(count int) Manifest {
 	methods := map[ContractKey]int{
 		{Method: "bpe_gpt_5", Encoding: "o200k_base", Implementation: "bpe-v1", NormalizationPolicy: "default", SpecialTokenPolicy: "default"}:     10,
