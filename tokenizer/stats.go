@@ -24,9 +24,16 @@ type Stats struct {
 	aggregationNanos    atomic.Int64
 	persistenceNanos    atomic.Int64
 	peakHeapAlloc       atomic.Uint64
+	cacheHits           atomic.Int64
+	cachePartialHits    atomic.Int64
+	cacheMisses         atomic.Int64
+	cacheMethodsAvoided atomic.Int64
+	cacheWarnings       atomic.Int64
 
 	tokenizedMu       sync.Mutex
 	tokenizedByMethod map[string]int64
+	cacheReasonsMu    sync.Mutex
+	cacheReasons      map[string]int64
 }
 
 // StatsSnapshot is the immutable view of one Stats collector.
@@ -44,11 +51,17 @@ type StatsSnapshot struct {
 	AggregationDuration      time.Duration
 	PersistenceReadyDuration time.Duration
 	PeakHeapAllocBytes       uint64
+	CacheHits                int64
+	CachePartialHits         int64
+	CacheMisses              int64
+	CacheMethodsAvoided      int64
+	CacheWarnings            int64
+	CacheReasons             map[string]int64
 }
 
 // NewStats creates an enabled instrumentation collector.
 func NewStats() *Stats {
-	return &Stats{tokenizedByMethod: make(map[string]int64)}
+	return &Stats{tokenizedByMethod: make(map[string]int64), cacheReasons: make(map[string]int64)}
 }
 
 // Snapshot returns a race-free copy of the measurements collected so far.
@@ -64,6 +77,13 @@ func (s *Stats) Snapshot() StatsSnapshot {
 	}
 	s.tokenizedMu.Unlock()
 
+	s.cacheReasonsMu.Lock()
+	reasons := make(map[string]int64, len(s.cacheReasons))
+	for reason, count := range s.cacheReasons {
+		reasons[reason] = count
+	}
+	s.cacheReasonsMu.Unlock()
+
 	return StatsSnapshot{
 		EntriesVisited:           s.entriesVisited.Load(),
 		EligibleFiles:            s.eligibleFiles.Load(),
@@ -78,6 +98,12 @@ func (s *Stats) Snapshot() StatsSnapshot {
 		AggregationDuration:      time.Duration(s.aggregationNanos.Load()),
 		PersistenceReadyDuration: time.Duration(s.persistenceNanos.Load()),
 		PeakHeapAllocBytes:       s.peakHeapAlloc.Load(),
+		CacheHits:                s.cacheHits.Load(),
+		CachePartialHits:         s.cachePartialHits.Load(),
+		CacheMisses:              s.cacheMisses.Load(),
+		CacheMethodsAvoided:      s.cacheMethodsAvoided.Load(),
+		CacheWarnings:            s.cacheWarnings.Load(),
+		CacheReasons:             reasons,
 	}
 }
 
@@ -157,6 +183,57 @@ func (s *Stats) RecordTokenizedFile(method string) {
 	}
 	s.tokenizedByMethod[method]++
 	s.tokenizedMu.Unlock()
+}
+
+func (s *Stats) RecordCacheHit(reason string, methods int) {
+	if s == nil {
+		return
+	}
+	s.cacheHits.Add(1)
+	if methods > 0 {
+		s.cacheMethodsAvoided.Add(int64(methods))
+	}
+	s.recordCacheReason(reason)
+}
+
+func (s *Stats) RecordCachePartialHit(reason string, reusableMethods, missingMethods int) {
+	if s == nil {
+		return
+	}
+	s.cachePartialHits.Add(1)
+	if reusableMethods > 0 {
+		s.cacheMethodsAvoided.Add(int64(reusableMethods))
+	}
+	s.recordCacheReason(reason)
+	if missingMethods > 0 {
+		s.cacheMisses.Add(1)
+	}
+}
+
+func (s *Stats) RecordCacheMiss(reason string) {
+	if s == nil {
+		return
+	}
+	s.cacheMisses.Add(1)
+	s.recordCacheReason(reason)
+}
+
+func (s *Stats) RecordCacheWarning() {
+	if s != nil {
+		s.cacheWarnings.Add(1)
+	}
+}
+
+func (s *Stats) recordCacheReason(reason string) {
+	if s == nil || reason == "" {
+		return
+	}
+	s.cacheReasonsMu.Lock()
+	if s.cacheReasons == nil {
+		s.cacheReasons = make(map[string]int64)
+	}
+	s.cacheReasons[reason]++
+	s.cacheReasonsMu.Unlock()
 }
 
 func (s *Stats) startTokenization() func() {

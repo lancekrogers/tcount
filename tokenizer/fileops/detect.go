@@ -85,9 +85,16 @@ func IsBinaryFile(path string, collectors ...BinaryStatsCollector) (bool, error)
 		collector.RecordBinarySniffBytes(int64(n))
 	}
 
-	if bytes.Contains(buf[:n], []byte{0}) {
-		return true, nil
-	}
+	return IsBinaryContent(path, buf[:n]), nil
+}
 
-	return false, nil
+// IsBinaryContent applies the same extension and null-byte prefix rules as
+// IsBinaryFile to bytes that have already been read by a caller.
+func IsBinaryContent(path string, content []byte) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if binaryExtensions[ext] {
+		return true
+	}
+	limit := min(len(content), binarySniffBytes)
+	return bytes.Contains(content[:limit], []byte{0})
 }

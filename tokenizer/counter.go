@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -199,172 +198,18 @@ func (c *Counter) CountFiles(ctx context.Context, files []string, model string, 
 	}
 	allMode := all || model == ""
 
-	workers := min(runtime.GOMAXPROCS(0), 8, len(files))
-	if spmPlanned(plans) {
-		// go-sentencepiece does not document Processor thread safety.
-		workers = 1
-	}
-
-	cctx, cancelFiles := context.WithCancel(ctx)
-	defer cancelFiles()
-
-	var (
-		wg         sync.WaitGroup
-		mu         sync.Mutex
-		firstErr   error
-		bytesTotal int
-		chars      int
-		words      int
-		lines      int
-	)
-	tokenSums := make([]int, len(plans))
-	failed := make([]bool, len(plans))
-
-	fail := func(err error) {
-		mu.Lock()
-		if firstErr == nil {
-			firstErr = err
-		}
-		mu.Unlock()
-		cancelFiles()
-	}
-
-	sem := make(chan struct{}, workers)
-dispatch:
-	for _, file := range files {
-		if cctx.Err() != nil {
-			break
-		}
-		select {
-		case sem <- struct{}{}:
-		case <-cctx.Done():
-			break dispatch
-		}
-		wg.Add(1)
-		go func(path string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			if cctx.Err() != nil {
-				return
-			}
-			if c.stats != nil {
-				c.stats.RecordFullFileOpen()
-			}
-			var readStarted time.Time
-			if c.stats != nil {
-				readStarted = time.Now()
-			}
-			content, err := os.ReadFile(path)
-			if c.stats != nil {
-				c.stats.RecordValidationReadDuration(time.Since(readStarted))
-			}
-			if err != nil {
-				fail(fmt.Errorf("reading file %q: %w", path, err))
-				return
-			}
-			if c.stats != nil {
-				c.stats.RecordFullFileBytes(int64(len(content)))
-				c.stats.ObserveMemory()
-			}
-			text := string(content)
-
-			recordTokenization := c.stats.startTokenization()
-			if recordTokenization != nil {
-				defer recordTokenization()
-			}
-
-			fileTokens := make([]int, len(plans))
-			for i, p := range plans {
-				if cctx.Err() != nil {
-					return
-				}
-				count, err := p.tok.CountTokens(text)
-				if err != nil {
-					if allMode {
-						mu.Lock()
-						failed[i] = true
-						mu.Unlock()
-						continue
-					}
-					fail(err)
-					return
-				}
-				fileTokens[i] = count
-				if c.stats != nil {
-					c.stats.RecordTokenizedFile(p.name)
-				}
-			}
-			if recordTokenization != nil {
-				recordTokenization()
-			}
-
-			fileWords := countWords(text)
-			fileLines := countLines(text)
-
-			var aggregationStarted time.Time
-			if c.stats != nil {
-				aggregationStarted = time.Now()
-			}
-			mu.Lock()
-			bytesTotal += len(content)
-			chars += len(text)
-			words += fileWords
-			lines += fileLines
-			for i := range plans {
-				tokenSums[i] += fileTokens[i]
-			}
-			mu.Unlock()
-			if c.stats != nil {
-				c.stats.RecordAggregationDuration(time.Since(aggregationStarted))
-				c.stats.ObserveMemory()
-			}
-		}(file)
-	}
-	wg.Wait()
-
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	if err := ctx.Err(); err != nil {
+	results, err := c.countFileResults(ctx, files, plans, allMode, nil, nil)
+	if err != nil {
 		return nil, err
-	}
-
-	var aggregationStarted time.Time
-	if c.stats != nil {
-		aggregationStarted = time.Now()
-	}
-	methods := make([]MethodResult, 0, len(plans))
-	for i, p := range plans {
-		if failed[i] {
-			continue
-		}
-		methods = append(methods, MethodResult{
-			Name:          p.name,
-			DisplayName:   p.displayName,
-			Tokens:        tokenSums[i],
-			IsExact:       p.isExact,
-			ContextWindow: p.contextWindow,
-		})
-	}
-	if includeApprox {
-		methods = append(methods, c.approximationsFromTotals(chars, words)...)
-	}
-	if c.stats != nil {
-		c.stats.RecordAggregationDuration(time.Since(aggregationStarted))
 	}
 
 	var persistenceStarted time.Time
 	if c.stats != nil {
 		persistenceStarted = time.Now()
 	}
-	result := &CountResult{
-		Characters: chars,
-		Words:      words,
-		Lines:      lines,
-		Methods:    methods,
-		FileSize:   bytesTotal,
-		FileCount:  len(files),
+	result, err := c.aggregateFileResults(ctx, results, plans, includeApprox)
+	if err != nil {
+		return nil, err
 	}
 	if c.stats != nil {
 		c.stats.RecordPersistenceReadyDuration(time.Since(persistenceStarted))

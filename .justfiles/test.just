@@ -37,8 +37,8 @@ container-image:
     docker build --file tests/container/Dockerfile --tag tcount-test:local .
 
 # Run all tests in the filesystem-isolated container harness.
-container: container-image
-    docker run --rm tcount-test:local test
+container filter="": container-image
+    docker run --rm tcount-test:local test "{{filter}}"
 
 # Run deterministic directory benchmarks. Use `just test cache-bench all 5` to include the 1 GiB tier.
 cache-bench tiers="small,medium" samples="5": container-image

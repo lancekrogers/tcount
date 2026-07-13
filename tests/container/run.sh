@@ -16,7 +16,7 @@ readonly LARGE_BYTES=$((1024 * 1024 * 1024))
 usage() {
     cat <<'EOF'
 Usage:
-  run.sh test
+  run.sh test [go-test-regexp]
   run.sh bench [--tiers small,medium] [--samples 5] [--repo /mounted/path]
   run.sh validation [--tiers small,medium] [--samples 5]
   run.sh manifest [--tiers small,medium,large] [--samples 3]
@@ -206,6 +206,10 @@ main() {
 
     case "$command" in
         test)
+            filter="${1:-}"
+            if [[ -n "$filter" ]]; then
+                exec go test -tags container ./... -run "(?i)$filter"
+            fi
             exec go test -tags container ./...
             ;;
         bench)
