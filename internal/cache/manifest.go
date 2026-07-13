@@ -39,6 +39,9 @@ func EncodeManifest(manifest Manifest) ([]byte, error) {
 		writer.string(path)
 		writeFileEntry(&writer, manifest.Entries[path])
 	}
+	if writer.err != nil {
+		return nil, writer.err
+	}
 	return writer.data, nil
 }
 
@@ -182,16 +185,24 @@ func LoadManifest(ctx context.Context, path string) (Manifest, error) {
 	if err := ctx.Err(); err != nil {
 		return Manifest{}, err
 	}
-	info, err := os.Stat(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
 	if err != nil {
 		return Manifest{}, err
 	}
 	if info.Size() > MaxManifestBytes {
-		return Manifest{}, fmt.Errorf("manifest exceeds %d bytes", MaxManifestBytes)
+		return Manifest{}, fmt.Errorf("%w: manifest exceeds %d bytes", ErrCacheCorrupt, MaxManifestBytes)
 	}
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(io.LimitReader(file, MaxManifestBytes+1))
 	if err != nil {
 		return Manifest{}, err
+	}
+	if int64(len(data)) > MaxManifestBytes {
+		return Manifest{}, fmt.Errorf("%w: manifest exceeds %d bytes", ErrCacheCorrupt, MaxManifestBytes)
 	}
 	if err := ctx.Err(); err != nil {
 		return Manifest{}, err
@@ -376,10 +387,22 @@ func contractKeyLess(left, right ContractKey) bool {
 
 type manifestWriter struct {
 	data []byte
+	size int64
+	err  error
 }
 
-func (writer *manifestWriter) raw(value []byte) { writer.data = append(writer.data, value...) }
-func (writer *manifestWriter) u8(value uint8)   { writer.data = append(writer.data, value) }
+func (writer *manifestWriter) raw(value []byte) {
+	if writer.err != nil {
+		return
+	}
+	if writer.size > MaxManifestBytes-int64(len(value)) {
+		writer.err = fmt.Errorf("manifest exceeds %d bytes", MaxManifestBytes)
+		return
+	}
+	writer.data = append(writer.data, value...)
+	writer.size += int64(len(value))
+}
+func (writer *manifestWriter) u8(value uint8) { writer.data = append(writer.data, value) }
 func (writer *manifestWriter) u32(value uint32) {
 	var encoded [4]byte
 	binary.LittleEndian.PutUint32(encoded[:], value)

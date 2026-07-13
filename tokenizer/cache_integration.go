@@ -95,11 +95,11 @@ func (c *Counter) prepareCacheCount(ctx context.Context, root string, files []st
 	if err != nil {
 		return nil, err
 	}
-	current, absolutePaths, validated, err := c.currentCacheIdentities(ctx, root, files, mode)
+	snapshot, err := c.loadCacheSnapshot(ctx, store, canonicalRoot)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := c.loadCacheSnapshot(ctx, store, canonicalRoot)
+	current, absolutePaths, validated, err := c.currentCacheIdentities(ctx, root, canonicalRoot, files, contracts, mode, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -257,10 +257,11 @@ func cacheContract(identity ContractIdentity) cache.ContractKey {
 	}
 }
 
-func (c *Counter) currentCacheIdentities(ctx context.Context, root string, files []string, mode cache.ValidationMode) (map[string]cache.FileIdentity, map[string]string, map[string]cacheValidatedFile, error) {
+func (c *Counter) currentCacheIdentities(ctx context.Context, root, canonicalRoot string, files []string, contracts []cache.ContractKey, mode cache.ValidationMode, snapshot *cache.Snapshot) (map[string]cache.FileIdentity, map[string]string, map[string]cacheValidatedFile, error) {
 	current := make(map[string]cache.FileIdentity, len(files))
 	absolutePaths := make(map[string]string, len(files))
 	validated := make(map[string]cacheValidatedFile)
+	verifiedSnapshot := compatibleCacheSnapshot(snapshot, canonicalRoot)
 	for _, path := range files {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, err
@@ -282,7 +283,7 @@ func (c *Counter) currentCacheIdentities(ctx context.Context, root string, files
 			ModTimeNS:      info.ModTime().UnixNano(),
 			Classification: cache.ClassificationText,
 		}
-		if mode == cache.Verified {
+		if mode == cache.Verified && verifiedSnapshot {
 			if c.stats != nil {
 				c.stats.RecordFullFileOpen()
 			}
@@ -302,14 +303,36 @@ func (c *Counter) currentCacheIdentities(ctx context.Context, root string, files
 			identity.ContentDigest = sha256.Sum256(content)
 			validated[path] = cacheValidatedFile{content: content, digest: identity.ContentDigest, digestKnown: true}
 			if fileops.IsBinaryContent(path, content) {
-				delete(validated, path)
 				continue
+			}
+			if retainVerifiedContent(snapshot, relative, identity, contracts) {
+				validated[path] = cacheValidatedFile{content: content, digest: identity.ContentDigest, digestKnown: true}
 			}
 		}
 		current[relative] = identity
 		absolutePaths[relative] = path
 	}
 	return current, absolutePaths, validated, nil
+}
+
+func compatibleCacheSnapshot(snapshot *cache.Snapshot, root string) bool {
+	return snapshot != nil && snapshot.SchemaVersion == cache.CurrentSchemaVersion && snapshot.Root == root
+}
+
+func retainVerifiedContent(snapshot *cache.Snapshot, path string, identity cache.FileIdentity, contracts []cache.ContractKey) bool {
+	if snapshot == nil {
+		return false
+	}
+	cached, exists := snapshot.Entries[path]
+	if !exists || cached.Size != identity.Size || cached.ModTimeNS != identity.ModTimeNS || cached.ContentDigest != identity.ContentDigest || cached.Classification != identity.Classification {
+		return true
+	}
+	for _, contract := range contracts {
+		if _, exists := cached.Methods[contract]; !exists {
+			return true
+		}
+	}
+	return false
 }
 
 func cacheRelativePath(root, path string) (string, error) {

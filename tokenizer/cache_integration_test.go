@@ -108,6 +108,60 @@ func TestCountFilesWithCacheFailureFallsBackToColdResult(t *testing.T) {
 	}
 }
 
+func TestRetainVerifiedContentOnlyForFilesThatNeedCounting(t *testing.T) {
+	contract := cache.ContractKey{Method: "bpe", Encoding: "o200k_base"}
+	digest := [32]byte{1}
+	identity := cache.FileIdentity{
+		RelativePath:   "one.txt",
+		Size:           10,
+		ModTimeNS:      20,
+		ContentDigest:  digest,
+		Classification: cache.ClassificationText,
+	}
+	complete := &cache.Snapshot{
+		SchemaVersion: cache.CurrentSchemaVersion,
+		Root:          "/root",
+		Entries: map[string]cache.FileResult{
+			"one.txt": {
+				Size:           identity.Size,
+				ModTimeNS:      identity.ModTimeNS,
+				ContentDigest:  identity.ContentDigest,
+				Classification: identity.Classification,
+				Methods:        map[cache.ContractKey]int{contract: 10},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		snapshot *cache.Snapshot
+		identity cache.FileIdentity
+		want     bool
+	}{
+		{name: "cold snapshot", want: false},
+		{name: "complete hit", snapshot: complete, identity: identity, want: false},
+		{name: "partial contract hit", snapshot: complete, identity: identity, want: true},
+		{name: "changed digest", snapshot: complete, identity: cache.FileIdentity{RelativePath: identity.RelativePath, Size: identity.Size, ModTimeNS: identity.ModTimeNS, ContentDigest: [32]byte{2}, Classification: identity.Classification}, want: true},
+		{name: "new path", snapshot: complete, identity: cache.FileIdentity{RelativePath: "new.txt", Size: identity.Size, ModTimeNS: identity.ModTimeNS, ContentDigest: identity.ContentDigest, Classification: identity.Classification}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			contracts := []cache.ContractKey{contract}
+			if test.name == "partial contract hit" {
+				partial := *complete
+				partial.Entries = map[string]cache.FileResult{"one.txt": complete.Entries["one.txt"]}
+				entry := partial.Entries["one.txt"]
+				entry.Methods = nil
+				partial.Entries["one.txt"] = entry
+				test.snapshot = &partial
+			}
+			if got := retainVerifiedContent(test.snapshot, test.identity.RelativePath, test.identity, contracts); got != test.want {
+				t.Fatalf("retainVerifiedContent() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 type failingCacheStore struct{}
 
 func (failingCacheStore) Load(context.Context, string) (*cache.Snapshot, error) {
