@@ -44,6 +44,14 @@ container filter="": container-image
 cache-bench tiers="small,medium" samples="5": container-image
     docker run --rm tcount-test:local bench --tiers "{{tiers}}" --samples "{{samples}}"
 
+# Benchmark integrated cache population, warm reuse, and mutation work.
+cache-path tiers="small,medium" samples="3": container-image
+    docker run --rm tcount-test:local cache --tiers "{{tiers}}" --samples "{{samples}}"
+
+# Benchmark only the one-model cache path for resource-heavy tiers.
+cache-path-model tiers="large" samples="1": container-image
+    docker run --rm tcount-test:local cache --tiers "{{tiers}}" --samples "{{samples}}" --model-only
+
 # Compare metadata and verified validation without rerunning tokenization.
 cache-validate tiers="small,medium" samples="5": container-image
     docker run --rm tcount-test:local validation --tiers "{{tiers}}" --samples "{{samples}}"

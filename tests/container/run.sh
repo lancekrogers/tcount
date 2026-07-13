@@ -18,6 +18,7 @@ usage() {
 Usage:
   run.sh test [go-test-regexp]
   run.sh bench [--tiers small,medium] [--samples 5] [--repo /mounted/path]
+  run.sh cache [--tiers small,medium] [--samples 3] [--repo /mounted/path] [--model-only]
   run.sh validation [--tiers small,medium] [--samples 5]
   run.sh manifest [--tiers small,medium,large] [--samples 3]
 
@@ -90,7 +91,7 @@ run_samples() {
                 > /dev/null 2> "$output"
         fi
         elapsed=$(sed -n 's/^elapsed_seconds=\([^ ]*\).*/\1/p' "$output")
-        instrumentation=$(sed -n 's/^Instrumentation: //p' "$output")
+        instrumentation=$(sed -n 's/^Cache diagnostics: //p' "$output")
         printf '%s\n' "$elapsed" >> "$values"
         printf 'sample=%d elapsed_seconds=%s %s %s\n' "$sample" "$elapsed" \
             "$(sed -n 's/^elapsed_seconds=[^ ]* //p' "$output")" "$instrumentation"
@@ -200,6 +201,155 @@ run_benchmarks() {
     rm -rf "$workspace"
 }
 
+run_timed_cache_count() {
+    local tier="$1"
+    local root="$2"
+    local mode="$3"
+    local validation="$4"
+    local cache_root="$5"
+    local phase="$6"
+    local sample="$7"
+    local output
+    local elapsed
+    local instrumentation
+    local -a args
+
+    output=$(mktemp)
+    args=(--no-color --verbose --directory --cache)
+    if [[ "$mode" == "model" ]]; then
+        args+=(--model gpt-5)
+    else
+        args+=(--all)
+    fi
+    if [[ "$validation" == "verified" ]]; then
+        args+=(--cache-verify)
+    fi
+    env TCOUNT_CACHE_DIR="$cache_root" /usr/bin/time -f 'elapsed_seconds=%e user_seconds=%U sys_seconds=%S peak_rss_kb=%M' \
+        "$TCOUNT" "${args[@]}" "$root" > /dev/null 2> "$output"
+    elapsed=$(sed -n 's/^elapsed_seconds=\([^ ]*\).*/\1/p' "$output")
+    instrumentation=$(sed -n 's/^Cache diagnostics: //p' "$output")
+    printf 'cache tier=%s phase=%s validation=%s mode=%s sample=%s elapsed_seconds=%s %s %s\n' \
+        "$tier" "$phase" "$validation" "$mode" "$sample" "$elapsed" \
+        "$(sed -n 's/^elapsed_seconds=[^ ]* //p' "$output")" "$instrumentation"
+    printf '%s\n' "$elapsed"
+    rm -f "$output"
+}
+
+cache_manifest_bytes() {
+    local cache_root="$1"
+    find "$cache_root" -type f -name manifest -printf '%s\n' 2>/dev/null | awk '{total += $1} END {print total + 0}'
+}
+
+run_cache_scenario() {
+    local tier="$1"
+    local root="$2"
+    local mode="$3"
+    local validation="$4"
+    local samples="$5"
+    local workspace="$6"
+    local population_values
+    local warm_values
+    local sample
+    local cache_root
+    local warm_cache
+    local elapsed
+
+    population_values=$(mktemp)
+    warm_values=$(mktemp)
+    for sample in $(seq 1 "$samples"); do
+        cache_root="$workspace/cache-$tier-$validation-$mode-population-$sample"
+        elapsed=$(run_timed_cache_count "$tier" "$root" "$mode" "$validation" "$cache_root" population "$sample" | tee /dev/stderr | tail -n 1)
+        printf '%s\n' "$elapsed" >> "$population_values"
+        printf 'cache manifest tier=%s phase=population validation=%s mode=%s sample=%s bytes=%s\n' \
+            "$tier" "$validation" "$mode" "$sample" "$(cache_manifest_bytes "$cache_root")"
+    done
+
+    warm_cache="$workspace/cache-$tier-$validation-$mode-warm"
+    run_timed_cache_count "$tier" "$root" "$mode" "$validation" "$warm_cache" warm-seed 0 >/dev/null
+    for sample in $(seq 1 "$samples"); do
+        elapsed=$(run_timed_cache_count "$tier" "$root" "$mode" "$validation" "$warm_cache" warm "$sample" | tee /dev/stderr | tail -n 1)
+        printf '%s\n' "$elapsed" >> "$warm_values"
+    done
+    printf 'cache summary tier=%s phase=population validation=%s mode=%s median_elapsed_seconds=%s p95_elapsed_seconds=%s\n' \
+        "$tier" "$validation" "$mode" "$(median_value "$population_values" "$samples")" "$(p95_value "$population_values" "$samples")"
+    printf 'cache summary tier=%s phase=warm validation=%s mode=%s median_elapsed_seconds=%s p95_elapsed_seconds=%s manifest_bytes=%s\n' \
+        "$tier" "$validation" "$mode" "$(median_value "$warm_values" "$samples")" "$(p95_value "$warm_values" "$samples")" "$(cache_manifest_bytes "$warm_cache")"
+    rm -f "$population_values" "$warm_values"
+}
+
+run_cache_mutations() {
+    local workspace="$1"
+    local samples="$2"
+    local scenario
+    local sample
+    local root
+    local cache_root
+    local values
+    local elapsed
+
+    for scenario in edit add delete rename; do
+        values=$(mktemp)
+        for sample in $(seq 1 "$samples"); do
+            root="$workspace/mutation-$scenario-$sample"
+            cache_root="$workspace/mutation-cache-$scenario-$sample"
+            generate_fixture "mutation-$scenario" 2000 "$SMALL_BYTES" "$root" >/dev/null
+            env TCOUNT_CACHE_DIR="$cache_root" "$TCOUNT" --no-color --directory --cache --model gpt-5 "$root" >/dev/null
+            case "$scenario" in
+                edit) printf 'changed content\n' > "$root/file-000001.txt" ;;
+                add) cp "$root/file-000001.txt" "$root/file-added.txt" ;;
+                delete) rm -f "$root/file-000001.txt" ;;
+                rename) mv "$root/file-000001.txt" "$root/file-renamed.txt" ;;
+            esac
+            elapsed=$(run_timed_cache_count small "$root" model metadata "$cache_root" "mutation-$scenario" "$sample" | tee /dev/stderr | tail -n 1)
+            printf '%s\n' "$elapsed" >> "$values"
+        done
+        printf 'cache mutation summary tier=small scenario=%s median_elapsed_seconds=%s p95_elapsed_seconds=%s\n' \
+            "$scenario" "$(median_value "$values" "$samples")" "$(p95_value "$values" "$samples")"
+        rm -f "$values"
+    done
+}
+
+run_cache_benchmarks() {
+    local tiers="$1"
+    local samples="$2"
+    local repo="$3"
+    local model_only="$4"
+    local workspace
+    local tier
+    local params
+    local files
+    local bytes
+    local root
+    local validation
+
+    workspace=$(mktemp -d /tmp/tcount-cache-benchmark.XXXXXX)
+    if [[ "$tiers" == "all" ]]; then
+        tiers="small,medium,large"
+    fi
+    IFS=',' read -r -a requested_tiers <<< "$tiers"
+    for tier in "${requested_tiers[@]}"; do
+        if [[ -n "$repo" ]]; then
+            root="$repo"
+            printf 'cache fixture=%s source=mounted-repository path=%s content=not-recorded\n' "$tier" "$root"
+        else
+            params=$(fixture_parameters "$tier")
+            read -r files bytes <<< "$params"
+            root="$workspace/$tier"
+            generate_fixture "$tier" "$files" "$bytes" "$root"
+        fi
+        run_cache_scenario "$tier" "$root" model metadata "$samples" "$workspace"
+        run_cache_scenario "$tier" "$root" model verified "$samples" "$workspace"
+        if [[ "$model_only" != "true" ]]; then
+            run_cache_scenario "$tier" "$root" all metadata "$samples" "$workspace"
+            run_cache_scenario "$tier" "$root" all verified "$samples" "$workspace"
+        fi
+        if [[ "$tier" == "small" && -z "$repo" ]]; then
+            run_cache_mutations "$workspace" "$samples"
+        fi
+    done
+    rm -rf "$workspace"
+}
+
 main() {
     local command="${1:-}"
     shift || true
@@ -226,6 +376,23 @@ main() {
                 esac
             done
             run_benchmarks "$tiers" "$samples" "$repo"
+            ;;
+        cache)
+            local tiers="small,medium"
+            local samples="3"
+            local repo=""
+            local model_only="false"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --tiers) tiers="$2"; shift 2 ;;
+                    --samples) samples="$2"; shift 2 ;;
+                    --repo) repo="$2"; shift 2 ;;
+                    --model-only) model_only="true"; shift ;;
+                    -h|--help) usage; return 0 ;;
+                    *) printf 'unknown option: %s\n' "$1" >&2; usage >&2; return 2 ;;
+                esac
+            done
+            run_cache_benchmarks "$tiers" "$samples" "$repo" "$model_only"
             ;;
         validation)
             local tiers="small,medium"
