@@ -245,6 +245,9 @@ func (store *FileStore) ClearAll(ctx context.Context) (err error) {
 	}()
 	entries, err := os.ReadDir(store.resolver.rootsDirectory())
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		return classifyCacheFailure("list cache roots", store.resolver.rootsDirectory(), err)
 	}
 	for _, entry := range entries {

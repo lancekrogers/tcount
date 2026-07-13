@@ -20,6 +20,7 @@ func TestStatsSnapshotRecordsStagesAndMethods(t *testing.T) {
 	stats.RecordFullFileBytes(24)
 	stats.RecordTokenizedFile("bpe_o200k_base")
 	stats.RecordTokenizedFile("bpe_o200k_base")
+	stats.RecordCacheBytesReused(24)
 	stats.ObserveMemory()
 
 	snapshot := stats.Snapshot()
@@ -34,6 +35,9 @@ func TestStatsSnapshotRecordsStagesAndMethods(t *testing.T) {
 	}
 	if snapshot.FilesTokenizedByMethod["bpe_o200k_base"] != 2 {
 		t.Fatalf("tokenized files = %v, want bpe_o200k_base=2", snapshot.FilesTokenizedByMethod)
+	}
+	if snapshot.CacheBytesReused != 24 {
+		t.Fatalf("cache bytes reused = %d, want 24", snapshot.CacheBytesReused)
 	}
 	if snapshot.PeakHeapAllocBytes == 0 {
 		t.Fatal("peak heap allocation was not recorded")

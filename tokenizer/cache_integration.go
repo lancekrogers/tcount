@@ -138,10 +138,12 @@ func (c *Counter) scheduleCacheMisses(state *cacheCountState, indexes map[cache.
 		}
 		if decision.Kind == cache.DecisionHit {
 			c.stats.RecordCacheHit(string(decision.Reason), len(decision.ReusableMethods))
+			c.stats.RecordCacheBytesReused(state.current[decision.Path].Size)
 			continue
 		}
 		if decision.Kind == cache.DecisionPartialHit {
 			c.stats.RecordCachePartialHit(string(decision.Reason), len(decision.ReusableMethods), len(decision.MissingMethods))
+			c.stats.RecordCacheBytesReused(state.current[decision.Path].Size)
 		} else {
 			c.stats.RecordCacheMiss(string(decision.Reason))
 		}

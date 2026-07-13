@@ -28,6 +28,7 @@ type Stats struct {
 	cachePartialHits    atomic.Int64
 	cacheMisses         atomic.Int64
 	cacheMethodsAvoided atomic.Int64
+	cacheBytesReused    atomic.Int64
 	cacheWarnings       atomic.Int64
 
 	tokenizedMu       sync.Mutex
@@ -55,6 +56,7 @@ type StatsSnapshot struct {
 	CachePartialHits         int64
 	CacheMisses              int64
 	CacheMethodsAvoided      int64
+	CacheBytesReused         int64
 	CacheWarnings            int64
 	CacheReasons             map[string]int64
 }
@@ -102,6 +104,7 @@ func (s *Stats) Snapshot() StatsSnapshot {
 		CachePartialHits:         s.cachePartialHits.Load(),
 		CacheMisses:              s.cacheMisses.Load(),
 		CacheMethodsAvoided:      s.cacheMethodsAvoided.Load(),
+		CacheBytesReused:         s.cacheBytesReused.Load(),
 		CacheWarnings:            s.cacheWarnings.Load(),
 		CacheReasons:             reasons,
 	}
@@ -221,6 +224,15 @@ func (s *Stats) RecordCacheMiss(reason string) {
 func (s *Stats) RecordCacheWarning() {
 	if s != nil {
 		s.cacheWarnings.Add(1)
+	}
+}
+
+// RecordCacheBytesReused records the source bytes represented by reusable
+// cached file results. In verified mode those bytes may also be read for
+// digest validation; the separate full-read counter reports that I/O.
+func (s *Stats) RecordCacheBytesReused(bytes int64) {
+	if s != nil && bytes > 0 {
+		s.cacheBytesReused.Add(bytes)
 	}
 }
 
