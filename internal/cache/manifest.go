@@ -402,7 +402,7 @@ func (writer *manifestWriter) raw(value []byte) {
 	writer.data = append(writer.data, value...)
 	writer.size += int64(len(value))
 }
-func (writer *manifestWriter) u8(value uint8) { writer.data = append(writer.data, value) }
+func (writer *manifestWriter) u8(value uint8) { writer.raw([]byte{value}) }
 func (writer *manifestWriter) u32(value uint32) {
 	var encoded [4]byte
 	binary.LittleEndian.PutUint32(encoded[:], value)

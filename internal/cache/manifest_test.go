@@ -73,7 +73,7 @@ func TestManifestRejectsNonRelativePaths(t *testing.T) {
 
 func TestManifestWriterBoundsOutput(t *testing.T) {
 	writer := manifestWriter{size: MaxManifestBytes}
-	writer.raw([]byte{1})
+	writer.u8(1)
 	if writer.err == nil {
 		t.Fatal("manifest writer accepted bytes beyond the configured limit")
 	}

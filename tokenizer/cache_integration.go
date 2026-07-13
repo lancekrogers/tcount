@@ -301,8 +301,8 @@ func (c *Counter) currentCacheIdentities(ctx context.Context, root, canonicalRoo
 				return nil, nil, nil, fmt.Errorf("reading file %q for cache verification: %w", path, readErr)
 			}
 			identity.ContentDigest = sha256.Sum256(content)
-			validated[path] = cacheValidatedFile{content: content, digest: identity.ContentDigest, digestKnown: true}
 			if fileops.IsBinaryContent(path, content) {
+				delete(validated, path)
 				continue
 			}
 			if retainVerifiedContent(snapshot, relative, identity, contracts) {
