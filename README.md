@@ -1,7 +1,6 @@
 # tcount
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/lancekrogers/tcount.svg)](https://pkg.go.dev/github.com/lancekrogers/tcount)
-[![Go Report Card](https://goreportcard.com/badge/github.com/lancekrogers/tcount)](https://goreportcard.com/report/github.com/lancekrogers/tcount)
 [![Release](https://img.shields.io/github/v/release/lancekrogers/tcount)](https://github.com/lancekrogers/tcount/releases/latest)
 [![npm](https://img.shields.io/npm/v/@obedience-corp/tcount)](https://www.npmjs.com/package/@obedience-corp/tcount)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
