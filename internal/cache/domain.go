@@ -214,8 +214,8 @@ func classifyLockFailure(operation, path string, err error) error {
 
 // Store is the narrow persistence boundary used by counting code. A cache
 // failure must never replace a correctly computed count with an error; callers
-// may treat Load/Commit failures as cold-path or diagnostic conditions while
-// explicit management operations can surface them directly.
+// may treat load or commit-and-prune failures as cold-path or diagnostic
+// conditions while explicit management operations can surface them directly.
 type Store interface {
 	Load(context.Context, string) (*Snapshot, error)
 	Commit(context.Context, string, uint64, UpdateSet) error
