@@ -26,6 +26,18 @@ func TestIntegrationCLI_SingleFile(t *testing.T) {
 	}
 }
 
+func TestIntegrationCLI_CacheControlsAppearInHelp(t *testing.T) {
+	stdout, stderr, exitCode := runTcount(t, "--help")
+	if exitCode != 0 {
+		t.Fatalf("expected help exit code 0, got %d; stderr: %s", exitCode, stderr)
+	}
+	for _, control := range []string{"--cache", "--no-cache", "--cache-verify", "TCOUNT_CACHE_DIR"} {
+		if !strings.Contains(stdout, control) {
+			t.Errorf("help output missing %q:\n%s", control, stdout)
+		}
+	}
+}
+
 func TestIntegrationCLI_JSONOutput(t *testing.T) {
 	file := fixturesDir(t) + "/sample.txt"
 	result := runTcountJSON(t, file)
@@ -79,6 +91,26 @@ func TestIntegrationCLI_RecursiveDir(t *testing.T) {
 	}
 	if result.Characters == 0 {
 		t.Error("expected non-zero character count")
+	}
+}
+
+func TestIntegrationCLI_VerboseKeepsJSONOnStdout(t *testing.T) {
+	dir := fixturesDir(t) + "/walkdir"
+	stdout, stderr, exitCode := runTcount(t, "--verbose", "--json", "-r", dir)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr: %s", exitCode, stderr)
+	}
+	var result tokenizer.CountResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("verbose JSON output = %q: %v", stdout, err)
+	}
+	if strings.Contains(stdout, "Cache diagnostics") || strings.Contains(stdout, "Instrumentation") {
+		t.Fatalf("verbose diagnostics leaked into stdout: %s", stdout)
+	}
+	for _, field := range []string{"Cache diagnostics: mode=disabled", "tokenizer_calls=", "stages=walk:"} {
+		if !strings.Contains(stderr, field) {
+			t.Errorf("verbose stderr missing %q:\n%s", field, stderr)
+		}
 	}
 }
 

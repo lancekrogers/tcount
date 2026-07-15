@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Common binary file extensions.
@@ -45,27 +46,55 @@ var binaryExtensions = map[string]bool{
 const binarySniffBytes = 512
 
 // IsBinaryFile checks if a file is likely binary.
-func IsBinaryFile(path string) (bool, error) {
+func IsBinaryFile(path string, collectors ...BinaryStatsCollector) (bool, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	if binaryExtensions[ext] {
 		return true, nil
+	}
+
+	var collector BinaryStatsCollector
+	if len(collectors) > 0 {
+		collector = collectors[0]
+	}
+	var readStarted time.Time
+	if collector != nil {
+		readStarted = time.Now()
+		defer func() {
+			collector.RecordValidationReadDuration(time.Since(readStarted))
+		}()
 	}
 
 	file, err := os.Open(path)
 	if err != nil {
 		return false, err
 	}
+	if collector != nil {
+		collector.RecordBinarySniffOpen()
+	}
 	defer func() { _ = file.Close() }()
 
 	buf := make([]byte, binarySniffBytes)
 	n, err := file.Read(buf)
 	if err != nil && !errors.Is(err, io.EOF) {
+		if collector != nil {
+			collector.RecordBinarySniffBytes(int64(n))
+		}
 		return false, err
 	}
-
-	if bytes.Contains(buf[:n], []byte{0}) {
-		return true, nil
+	if collector != nil {
+		collector.RecordBinarySniffBytes(int64(n))
 	}
 
-	return false, nil
+	return IsBinaryContent(path, buf[:n]), nil
+}
+
+// IsBinaryContent applies the same extension and null-byte prefix rules as
+// IsBinaryFile to bytes that have already been read by a caller.
+func IsBinaryContent(path string, content []byte) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if binaryExtensions[ext] {
+		return true
+	}
+	limit := min(len(content), binarySniffBytes)
+	return bytes.Contains(content[:limit], []byte{0})
 }

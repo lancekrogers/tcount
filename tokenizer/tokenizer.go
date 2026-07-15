@@ -9,6 +9,8 @@
 package tokenizer
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"strings"
@@ -51,6 +53,61 @@ type Tokenizer interface {
 	// (as opposed to approximations).
 	IsExact() bool
 }
+
+// ContractIdentity is the stable compatibility identity for a tokenizer's
+// count semantics. Model names, display names, and context windows are
+// deliberately excluded because they describe presentation rather than the
+// bytes produced by the tokenizer.
+type ContractIdentity struct {
+	Method              string
+	Encoding            string
+	Implementation      string
+	VocabularyDigest    [sha256.Size]byte
+	NormalizationPolicy string
+	SpecialTokenPolicy  string
+}
+
+// Valid reports whether the identity has the fields required for safe cache
+// reuse. A zero vocabulary digest is valid for embedded tokenizers; external
+// vocabulary owners must populate it from their bytes.
+func (identity ContractIdentity) Valid() bool {
+	return identity.Method != "" && identity.Encoding != "" && identity.Implementation != "" && identity.NormalizationPolicy != "" && identity.SpecialTokenPolicy != ""
+}
+
+// ContractIdentityProvider marks tokenizers whose results may participate in
+// cache reuse. Custom Tokenizer implementations that do not provide this
+// identity remain countable but are not cache-compatible by default.
+type ContractIdentityProvider interface {
+	Contract() ContractIdentity
+}
+
+// ContractOf returns a tokenizer's stable cache identity when it exposes one.
+func ContractOf(tokenizer Tokenizer) (ContractIdentity, bool) {
+	provider, ok := tokenizer.(ContractIdentityProvider)
+	if !ok {
+		return ContractIdentity{}, false
+	}
+	identity := provider.Contract()
+	if !identity.Valid() {
+		return ContractIdentity{}, false
+	}
+	return identity, true
+}
+
+// Contract revisions must be bumped whenever tokenizer output semantics or
+// embedded data can change. Do not replace these with a broad build version:
+// unrelated builds must not invalidate compatible cached method results.
+const (
+	bpeImplementationRevision           = "bpe-v1"
+	approximationImplementationRevision = "approx-v1"
+	sentencePieceImplementationRevision = "sentencepiece-v1"
+	bpeNormalizationPolicy              = "none-v1"
+	bpeSpecialTokenPolicy               = "ordinary-no-special-tokens-v1"
+	approximationNormalizationPolicy    = "none-v1"
+	approximationSpecialTokenPolicy     = "none-v1"
+	sentencePieceNormalizationPolicy    = "processor-default-v1"
+	sentencePieceSpecialTokenPolicy     = "processor-default-v1"
+)
 
 // BPETokenizerWrapper implements exact tokenization using a BPE encoding.
 type BPETokenizerWrapper struct {
@@ -100,6 +157,18 @@ func (t *BPETokenizerWrapper) DisplayName() string {
 // IsExact returns true for BPE tokenizers.
 func (t *BPETokenizerWrapper) IsExact() bool {
 	return true
+}
+
+// Contract identifies ordinary BPE encoding. Model aliases that resolve to
+// this wrapper therefore share one reusable result.
+func (t *BPETokenizerWrapper) Contract() ContractIdentity {
+	return ContractIdentity{
+		Method:              "bpe",
+		Encoding:            t.encodingName,
+		Implementation:      bpeImplementationRevision,
+		NormalizationPolicy: bpeNormalizationPolicy,
+		SpecialTokenPolicy:  bpeSpecialTokenPolicy,
+	}
 }
 
 // getEncodingForModel maps model names to encoding types.
@@ -173,6 +242,19 @@ func (c *ClaudeApproximator) IsExact() bool {
 	return false
 }
 
+// Contract identifies the cached character/word approximation family. The
+// ratio is intentionally not part of this identity: cached character and
+// word totals are reducible primitives from which current ratios are derived.
+func (c *ClaudeApproximator) Contract() ContractIdentity {
+	return ContractIdentity{
+		Method:              "approximation",
+		Encoding:            EncodingClaudeApprox,
+		Implementation:      approximationImplementationRevision,
+		NormalizationPolicy: approximationNormalizationPolicy,
+		SpecialTokenPolicy:  approximationSpecialTokenPolicy,
+	}
+}
+
 // geminiCharsPerToken is the approximate character-to-token ratio for Gemini models.
 // Based on Google's guidance of ~4 characters per token for English text.
 const geminiCharsPerToken = 4.0
@@ -209,10 +291,21 @@ func (g *GeminiApproximator) IsExact() bool {
 	return false
 }
 
+// Contract identifies the cached character/word approximation family.
+func (g *GeminiApproximator) Contract() ContractIdentity {
+	return ContractIdentity{
+		Method:              "approximation",
+		Encoding:            EncodingGeminiApprox,
+		Implementation:      approximationImplementationRevision,
+		NormalizationPolicy: approximationNormalizationPolicy,
+		SpecialTokenPolicy:  approximationSpecialTokenPolicy,
+	}
+}
+
 // SPMTokenizerWrapper uses a .model vocab file for exact tokenization.
 type SPMTokenizerWrapper struct {
-	processor *sentencepiece.Processor
-	modelPath string
+	processor   *sentencepiece.Processor
+	vocabDigest [sha256.Size]byte
 }
 
 // NewSPMTokenizer creates a SentencePiece tokenizer from a .model vocab file.
@@ -222,21 +315,23 @@ func NewSPMTokenizer(modelPath string) (Tokenizer, error) {
 		return nil, ErrVocabFileRequired
 	}
 
-	if _, err := os.Stat(modelPath); err != nil {
+	vocabBytes, err := os.ReadFile(modelPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("vocab file not found: %s", modelPath)
 		}
-		return nil, fmt.Errorf("accessing vocab file: %w", err)
+		return nil, fmt.Errorf("reading vocab file: %w", err)
 	}
+	vocabDigest := sha256.Sum256(vocabBytes)
 
-	processor, err := sentencepiece.NewProcessorFromPath(modelPath)
+	processor, err := sentencepiece.NewProcessor(bytes.NewReader(vocabBytes))
 	if err != nil {
 		return nil, fmt.Errorf("loading SentencePiece model: %w", err)
 	}
 
 	return &SPMTokenizerWrapper{
-		processor: processor,
-		modelPath: modelPath,
+		processor:   processor,
+		vocabDigest: vocabDigest,
 	}, nil
 }
 
@@ -259,4 +354,26 @@ func (t *SPMTokenizerWrapper) DisplayName() string {
 // IsExact returns true because SentencePiece provides exact token counts.
 func (t *SPMTokenizerWrapper) IsExact() bool {
 	return true
+}
+
+// Contract includes the vocabulary content digest rather than its path or
+// filesystem metadata. Replacing bytes at the same path therefore invalidates
+// only the affected SentencePiece results.
+func (t *SPMTokenizerWrapper) Contract() ContractIdentity {
+	return sentencePieceContract(t.vocabDigest)
+}
+
+func sentencePieceContract(vocabDigest [sha256.Size]byte) ContractIdentity {
+	return ContractIdentity{
+		Method:              "sentencepiece",
+		Encoding:            EncodingSPM,
+		Implementation:      sentencePieceImplementationRevision,
+		VocabularyDigest:    vocabDigest,
+		NormalizationPolicy: sentencePieceNormalizationPolicy,
+		SpecialTokenPolicy:  sentencePieceSpecialTokenPolicy,
+	}
+}
+
+func vocabularyDigest(contents []byte) [sha256.Size]byte {
+	return sha256.Sum256(contents)
 }

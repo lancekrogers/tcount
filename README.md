@@ -21,6 +21,7 @@ A fast token counter for LLM workflows that runs entirely on your machine: no AP
 - **Provider filtering** — compare models from a specific provider
 - **Directory scanning** — `.gitignore`-aware, skips binaries, counts files in parallel with memory bounded by your largest file
 - **JSON output** for scripting and pipelines
+- **Experimental directory cache** — opt-in reuse for repeated recursive counts, with status, clear, verification, and bypass controls
 
 ## Install
 
@@ -80,6 +81,9 @@ tcount -d ./src
 
 # JSON output for scripting
 tcount --json document.md
+
+# Opt-in cache for repeated directory counts
+tcount -d --cache ./src
 ```
 
 Or import the same engine in Go:
@@ -178,6 +182,9 @@ tcount [file|directory] [flags]
 | `--json` | | JSON output |
 | `--recursive` | `-r` | Recursively count files in a directory |
 | `--directory` | `-d` | Alias for `--recursive` |
+| `--cache` | | Enable experimental persistent caching for recursive directory counts |
+| `--no-cache` | | Force a cold count without reading or writing cache state |
+| `--cache-verify` | | Hash file contents before reusing cache entries; requires `--cache` |
 | `--chars-per-token` | | Character/token ratio for approximation (default: 4.0) |
 | `--words-per-token` | | Words/token ratio for approximation (default: 0.75) |
 | `--verbose` | | Show additional details |
@@ -232,7 +239,48 @@ Point tcount at a project directory to count every text file in one pass:
 tcount -d --verbose ./src
 ```
 
-When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Use `--verbose` to see file and skip statistics.
+When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Use `--verbose` to see the scan and cache summary on stderr.
+
+### Experimental directory cache
+
+The directory cache is off by default. Opt in explicitly with `--cache`:
+
+```bash
+# First run counts and stores reusable per-file results.
+tcount -d --cache ./src
+
+# A later run reuses unchanged files. Use content verification when exactness
+# must survive a timestamp-preserving rewrite.
+tcount -d --cache --cache-verify ./src
+
+# Inspect or remove state without running a count.
+tcount cache status ./src
+tcount cache status --json ./src
+tcount cache clear ./src
+tcount cache clear --all
+
+# Force a cold run; this does not construct or access the cache store.
+tcount -d --no-cache ./src
+```
+
+Cache files live under the platform user-cache directory in the namespaced
+`tcount/v1/roots` tree. Set `TCOUNT_CACHE_DIR` to choose a different parent;
+the same `tcount/v1` namespace is appended there. The manifest stores the
+canonical root, relative file paths, file metadata, content digests for
+populated entries, aggregate text statistics, and tokenizer counts. The
+verified mode recomputes and compares those digests before reuse. It does not
+store source file contents, but paths and counts can still be sensitive.
+
+Plain `--cache` uses metadata validation (relative path, size, and nanosecond
+modification time), so a rewrite that preserves all three can be a false hit.
+Use `--cache-verify` for SHA-256 content validation. Cache load, validation, or
+persistence failures do not replace a successful cold count; `--verbose`
+reports them on stderr. Explicit `cache status` and `cache clear` operations
+return failures to the caller. The feature is experimental and its on-disk
+format may change before it becomes a default.
+
+See [the directory-cache operations guide](docs/directory-cache/README.md) for
+the storage, privacy, exactness, and rollout details.
 
 ### JSON output
 

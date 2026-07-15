@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/lancekrogers/tcount/tokenizer/fileops"
@@ -21,6 +21,7 @@ type Counter struct {
 	wordsPerToken float64
 	vocabFile     string
 	provider      Provider
+	stats         *Stats
 
 	mu         sync.Mutex
 	tokenizers map[string]Tokenizer
@@ -41,6 +42,7 @@ func NewCounter(opts CounterOptions) (*Counter, error) {
 		wordsPerToken: opts.WordsPerToken,
 		vocabFile:     opts.VocabFile,
 		provider:      opts.Provider,
+		stats:         opts.Stats,
 		tokenizers:    make(map[string]Tokenizer),
 	}
 
@@ -92,7 +94,13 @@ func (c *Counter) CountFile(ctx context.Context, path string, model string, all 
 		return nil, err
 	}
 
-	isBinary, err := fileops.IsBinaryFile(path)
+	var isBinary bool
+	var err error
+	if c.stats != nil {
+		isBinary, err = fileops.IsBinaryFile(path, c.stats)
+	} else {
+		isBinary, err = fileops.IsBinaryFile(path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("checking if file is binary %q: %w", path, err)
 	}
@@ -104,7 +112,17 @@ func (c *Counter) CountFile(ctx context.Context, path string, model string, all 
 		return nil, err
 	}
 
+	if c.stats != nil {
+		c.stats.RecordFullFileOpen()
+	}
+	var readStarted time.Time
+	if c.stats != nil {
+		readStarted = time.Now()
+	}
 	content, err := os.ReadFile(path)
+	if c.stats != nil {
+		c.stats.RecordValidationReadDuration(time.Since(readStarted))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading file %q: %w", path, err)
 	}
@@ -116,6 +134,10 @@ func (c *Counter) CountFile(ctx context.Context, path string, model string, all 
 
 	result.FilePath = path
 	result.FileSize = len(content)
+	if c.stats != nil {
+		c.stats.RecordFullFileBytes(int64(len(content)))
+		c.stats.ObserveMemory()
+	}
 
 	return result, nil
 }
@@ -129,7 +151,13 @@ func (c *Counter) CountDirectory(ctx context.Context, path string, model string,
 		return nil, err
 	}
 
-	walkResult, err := fileops.WalkDirectory(ctx, path)
+	var walkResult *fileops.WalkResult
+	var err error
+	if c.stats != nil {
+		walkResult, err = fileops.WalkDirectory(ctx, path, c.stats)
+	} else {
+		walkResult, err = fileops.WalkDirectory(ctx, path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("walking directory %q: %w", path, err)
 	}
@@ -170,124 +198,24 @@ func (c *Counter) CountFiles(ctx context.Context, files []string, model string, 
 	}
 	allMode := all || model == ""
 
-	workers := min(runtime.GOMAXPROCS(0), 8, len(files))
-	if spmPlanned(plans) {
-		// go-sentencepiece does not document Processor thread safety.
-		workers = 1
-	}
-
-	cctx, cancelFiles := context.WithCancel(ctx)
-	defer cancelFiles()
-
-	var (
-		wg         sync.WaitGroup
-		mu         sync.Mutex
-		firstErr   error
-		bytesTotal int
-		chars      int
-		words      int
-		lines      int
-	)
-	tokenSums := make([]int, len(plans))
-	failed := make([]bool, len(plans))
-
-	fail := func(err error) {
-		mu.Lock()
-		if firstErr == nil {
-			firstErr = err
-		}
-		mu.Unlock()
-		cancelFiles()
-	}
-
-	sem := make(chan struct{}, workers)
-	for _, file := range files {
-		if cctx.Err() != nil {
-			break
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(path string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			if cctx.Err() != nil {
-				return
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				fail(fmt.Errorf("reading file %q: %w", path, err))
-				return
-			}
-			text := string(content)
-
-			fileTokens := make([]int, len(plans))
-			for i, p := range plans {
-				if cctx.Err() != nil {
-					return
-				}
-				count, err := p.tok.CountTokens(text)
-				if err != nil {
-					if allMode {
-						mu.Lock()
-						failed[i] = true
-						mu.Unlock()
-						continue
-					}
-					fail(err)
-					return
-				}
-				fileTokens[i] = count
-			}
-
-			fileWords := countWords(text)
-			fileLines := countLines(text)
-
-			mu.Lock()
-			bytesTotal += len(content)
-			chars += len(text)
-			words += fileWords
-			lines += fileLines
-			for i := range plans {
-				tokenSums[i] += fileTokens[i]
-			}
-			mu.Unlock()
-		}(file)
-	}
-	wg.Wait()
-
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	if err := ctx.Err(); err != nil {
+	results, err := c.countFileResults(ctx, files, plans, allMode, nil, nil)
+	if err != nil {
 		return nil, err
 	}
 
-	methods := make([]MethodResult, 0, len(plans))
-	for i, p := range plans {
-		if failed[i] {
-			continue
-		}
-		methods = append(methods, MethodResult{
-			Name:          p.name,
-			DisplayName:   p.displayName,
-			Tokens:        tokenSums[i],
-			IsExact:       p.isExact,
-			ContextWindow: p.contextWindow,
-		})
+	var persistenceStarted time.Time
+	if c.stats != nil {
+		persistenceStarted = time.Now()
 	}
-	if includeApprox {
-		methods = append(methods, c.approximationsFromTotals(chars, words)...)
+	result, err := c.aggregateFileResults(ctx, results, plans, includeApprox)
+	if err != nil {
+		return nil, err
 	}
-
-	return &CountResult{
-		Characters: chars,
-		Words:      words,
-		Lines:      lines,
-		Methods:    methods,
-		FileSize:   bytesTotal,
-		FileCount:  len(files),
-	}, nil
+	if c.stats != nil {
+		c.stats.RecordPersistenceReadyDuration(time.Since(persistenceStarted))
+		c.stats.ObserveMemory()
+	}
+	return result, nil
 }
 
 // methodPlan is one counting method resolved ahead of execution, so a single

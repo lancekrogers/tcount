@@ -13,6 +13,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
+	"github.com/lancekrogers/tcount/internal/cache"
 	"github.com/lancekrogers/tcount/internal/errors"
 	"github.com/lancekrogers/tcount/internal/ui"
 	"github.com/lancekrogers/tcount/tokenizer"
@@ -27,8 +28,12 @@ type countOptions struct {
 	jsonOutput    bool
 	showModels    bool
 	recursive     bool
+	cache         bool
+	noCache       bool
+	cacheVerify   bool
 	noColor       bool
 	verbose       bool
+	stats         *tokenizer.Stats
 	charsPerToken float64
 	wordsPerToken float64
 }
@@ -60,7 +65,9 @@ Google Gemini models.
 When counting a directory with --recursive, the command:
   - Respects .gitignore files
   - Skips binary files automatically
-  - Counts each text file in parallel and returns summed totals`,
+  - Counts each text file in parallel and returns summed totals
+  - Enables experimental persistence only when --cache is explicitly supplied
+  - Hashes file contents before reuse when --cache-verify is supplied`,
 		Example: `  tcount document.md                                       # Count tokens in a file
   tcount --model gpt-4o doc.md                             # Use GPT-4o tokenizer
   tcount --model gpt-5 doc.md                              # Use GPT-5 tokenizer
@@ -70,6 +77,8 @@ When counting a directory with --recursive, the command:
   tcount --all doc.md                                      # Show all counting methods
   tcount --json doc.md                                     # Output as JSON
   tcount -r ./src                                          # Count all files in directory
+  tcount -d --cache ./src                                  # Opt into experimental directory caching
+  TCOUNT_CACHE_DIR=/tmp/tcount-cache tcount -d --cache ./src
   tcount -r --models ./project                             # Show encoding→model lookup`,
 		Args: cobra.ExactArgs(1),
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -85,6 +94,7 @@ When counting a directory with --recursive, the command:
 	}
 
 	registerFlags(cmd, opts)
+	cmd.AddCommand(newCacheCommand())
 
 	return cmd
 }
@@ -126,6 +136,9 @@ Download vocab files from HuggingFace (see error messages for URLs)`)
 	cmd.Flags().BoolVarP(&opts.showModels, "models", "m", false, "show encoding-to-model lookup table")
 	cmd.Flags().BoolVarP(&opts.recursive, "recursive", "r", false, "recursively count tokens in directory")
 	cmd.Flags().BoolVarP(&opts.recursive, "directory", "d", false, "alias for --recursive")
+	cmd.Flags().BoolVar(&opts.cache, "cache", false, "enable experimental persistent cache for recursive directories")
+	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "force cold counting without reading or writing cache state")
+	cmd.Flags().BoolVar(&opts.cacheVerify, "cache-verify", false, "hash file contents before reusing cached directory results (requires --cache)")
 	cmd.Flags().Float64Var(&opts.charsPerToken, "chars-per-token", tokenizer.DefaultCharsPerToken, "characters per token ratio")
 	cmd.Flags().Float64Var(&opts.wordsPerToken, "words-per-token", tokenizer.DefaultWordsPerToken, "words per token ratio")
 }
@@ -162,6 +175,12 @@ var validProviders = []string{"openai", "anthropic", "google", "meta", "deepseek
 
 func runCount(ctx context.Context, path string, opts *countOptions) error {
 	display := ui.New(opts.noColor, opts.verbose)
+	if opts.verbose {
+		opts.stats = tokenizer.NewStats()
+	}
+	if err := validateCacheFlags(opts); err != nil {
+		return err
+	}
 
 	if !isValidProvider(opts.provider) {
 		return errors.Validation(fmt.Sprintf("invalid provider %q, valid options: %s",
@@ -176,6 +195,9 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := validateCacheTarget(opts, isDirectory); err != nil {
+		return err
+	}
 
 	if err := sentencePieceGuard(opts); err != nil {
 		return err
@@ -186,6 +208,7 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		WordsPerToken: opts.wordsPerToken,
 		VocabFile:     opts.vocabFile,
 		Provider:      tokenizer.Provider(opts.provider),
+		Stats:         opts.stats,
 	})
 	if err != nil {
 		return errors.Wrap(err, "creating token counter")
@@ -193,7 +216,19 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 
 	var result *tokenizer.CountResult
 	if isDirectory {
-		result, err = counter.CountFiles(ctx, walkFiles, opts.model, opts.all)
+		if opts.cache {
+			store, storeErr := newCacheStore()
+			if storeErr != nil {
+				return errors.Wrap(storeErr, "creating cache store")
+			}
+			mode := cache.Metadata
+			if opts.cacheVerify {
+				mode = cache.Verified
+			}
+			result, err = counter.CountFilesWithCache(ctx, path, walkFiles, opts.model, opts.all, store, mode)
+		} else {
+			result, err = counter.CountFiles(ctx, walkFiles, opts.model, opts.all)
+		}
 	} else {
 		result, err = counter.Count(ctx, string(content), opts.model, opts.all)
 	}
@@ -205,6 +240,8 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	result.IsDirectory = isDirectory
 	if !isDirectory {
 		result.FileSize = len(content)
+	} else if opts.stats != nil {
+		outputStats(display, opts.stats.Snapshot(), cacheDiagnosticsMode(opts))
 	}
 
 	if opts.jsonOutput {
@@ -212,6 +249,49 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	}
 
 	return outputTable(result, opts.showModels)
+}
+
+func validateCacheFlags(opts *countOptions) error {
+	if opts.cache && opts.noCache {
+		return errors.Validation("--cache and --no-cache cannot be used together")
+	}
+	if opts.cacheVerify && !opts.cache {
+		return errors.Validation("--cache-verify requires --cache")
+	}
+	return nil
+}
+
+func validateCacheTarget(opts *countOptions, isDirectory bool) error {
+	if opts.cache && !isDirectory {
+		return errors.Validation("--cache is only supported for recursive directory counts")
+	}
+	return nil
+}
+
+const cacheDirEnvironment = "TCOUNT_CACHE_DIR"
+
+func newCacheStore() (*cache.FileStore, error) {
+	baseDir := os.Getenv(cacheDirEnvironment)
+	if baseDir != "" {
+		info, err := os.Stat(baseDir)
+		if err == nil && !info.IsDir() {
+			return nil, fmt.Errorf("%s must name a directory: %s", cacheDirEnvironment, baseDir)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("checking %s=%q: %w", cacheDirEnvironment, baseDir, err)
+		}
+		resolver, err := cache.NewLocationResolverAt(baseDir)
+		if err != nil {
+			return nil, fmt.Errorf("using %s=%q: %w", cacheDirEnvironment, baseDir, err)
+		}
+		return cache.NewFileStore(resolver), nil
+	}
+
+	store, err := cache.NewDefaultFileStore()
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 // resolveInput stats the path and loads the single file's content or walks
@@ -234,7 +314,12 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, display 
 		return nil, nil, true, errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
 	}
 
-	walkResult, err := fileops.WalkDirectory(ctx, path)
+	var walkResult *fileops.WalkResult
+	if opts.stats != nil {
+		walkResult, err = fileops.WalkDirectory(ctx, path, opts.stats)
+	} else {
+		walkResult, err = fileops.WalkDirectory(ctx, path)
+	}
 	if err != nil {
 		return nil, nil, true, errors.IO("walking directory", err).WithField("path", path)
 	}
@@ -243,12 +328,83 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, display 
 		return nil, nil, true, errors.NotFound("text files in directory").WithField("path", path)
 	}
 
-	if opts.verbose {
-		display.Info("Found %d text files (skipped %d binary, %d ignored)",
-			len(walkResult.Files), walkResult.SkippedBinary, walkResult.SkippedIgnore)
-	}
-
 	return nil, walkResult.Files, true, nil
+}
+
+func cacheDiagnosticsMode(opts *countOptions) string {
+	if !opts.cache {
+		return "disabled"
+	}
+	if opts.cacheVerify {
+		return cache.Verified.String()
+	}
+	return cache.Metadata.String()
+}
+
+func outputStats(display *ui.UI, stats tokenizer.StatsSnapshot, validationMode string) {
+	display.Diagnostic("Cache diagnostics: mode=%s files=%d hits=%d partial_hits=%d misses=%d incompatibilities=%d methods_avoided=%d reused_bytes=%d read_bytes=%d tokenizer_calls=%d warnings=%d stages=walk:%s,validation_read:%s,tokenization:%s,aggregation:%s,persistence:%s reasons=%s",
+		validationMode,
+		stats.EligibleFiles,
+		stats.CacheHits,
+		stats.CachePartialHits,
+		stats.CacheMisses,
+		cacheIncompatibilities(stats.CacheReasons),
+		stats.CacheMethodsAvoided,
+		stats.CacheBytesReused,
+		stats.FullFileBytes,
+		tokenizerCalls(stats.FilesTokenizedByMethod),
+		stats.CacheWarnings,
+		stats.WalkDuration,
+		stats.ValidationReadDuration,
+		stats.TokenizationDuration,
+		stats.AggregationDuration,
+		stats.PersistenceReadyDuration,
+		formatCacheReasons(stats.CacheReasons),
+	)
+}
+
+func tokenizerCalls(byMethod map[string]int64) int64 {
+	var calls int64
+	for _, count := range byMethod {
+		calls += count
+	}
+	return calls
+}
+
+func cacheIncompatibilities(reasons map[string]int64) int64 {
+	var total int64
+	for reason, count := range reasons {
+		switch cache.InvalidationReason(reason) {
+		case cache.ReasonSchemaMismatch,
+			cache.ReasonRootMismatch,
+			cache.ReasonPathChanged,
+			cache.ReasonSizeChanged,
+			cache.ReasonModTimeChanged,
+			cache.ReasonContentChanged,
+			cache.ReasonClassificationChanged,
+			cache.ReasonContractMissing:
+			total += count
+		}
+	}
+	return total
+}
+
+func formatCacheReasons(reasons map[string]int64) string {
+	keys := make([]string, 0, len(reasons))
+	for reason, count := range reasons {
+		if count > 0 {
+			keys = append(keys, reason)
+		}
+	}
+	if len(keys) == 0 {
+		return "none"
+	}
+	slices.Sort(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, reasons[key]))
+	}
+	return strings.Join(parts, ",")
 }
 
 // sentencePieceGuard rejects models that require a SentencePiece vocab file
