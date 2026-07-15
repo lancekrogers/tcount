@@ -219,6 +219,7 @@ func classifyLockFailure(operation, path string, err error) error {
 type Store interface {
 	Load(context.Context, string) (*Snapshot, error)
 	Commit(context.Context, string, uint64, UpdateSet) error
+	CommitAndPrune(context.Context, string, uint64, UpdateSet, PruneOptions) error
 	Status(context.Context, string) (Status, error)
 	Clear(context.Context, string) error
 }

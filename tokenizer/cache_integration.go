@@ -205,9 +205,6 @@ func copyReusableMethods(destination, source *perFileResult) {
 }
 
 func (c *Counter) commitCacheUpdates(ctx context.Context, store cache.Store, state *cacheCountState, updates cache.UpdateSet) error {
-	if len(updates) == 0 {
-		return ctx.Err()
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -215,11 +212,23 @@ func (c *Counter) commitCacheUpdates(ctx context.Context, store cache.Store, sta
 	if state.snapshot != nil {
 		baseGeneration = state.snapshot.Generation
 	}
-	if err := store.Commit(ctx, state.root, baseGeneration, updates); err != nil {
+	observed := make(map[string]struct{}, len(state.current))
+	for path := range state.current {
+		observed[path] = struct{}{}
+	}
+	// A full successful walk makes the current membership authoritative for
+	// pruning; the store keeps commit and prune in one writer critical section.
+	err := store.CommitAndPrune(ctx, state.root, baseGeneration, updates, cache.PruneOptions{
+		ObservedPaths:     observed,
+		FullWalkSucceeded: true,
+	})
+	if err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
 			return contextErr
 		}
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			// Preserve the correct aggregate for persistence failures, but keep
+			// cancellation visible to the caller.
 			c.stats.RecordCacheWarning()
 		}
 		return nil
@@ -301,11 +310,7 @@ func (c *Counter) currentCacheIdentities(ctx context.Context, root, canonicalRoo
 				return nil, nil, nil, fmt.Errorf("reading file %q for cache verification: %w", path, readErr)
 			}
 			identity.ContentDigest = sha256.Sum256(content)
-			if fileops.IsBinaryContent(path, content) {
-				delete(validated, path)
-				continue
-			}
-			if retainVerifiedContent(snapshot, relative, identity, contracts) {
+			if !fileops.IsBinaryContent(path, content) && retainVerifiedContent(snapshot, relative, identity, contracts) {
 				validated[path] = cacheValidatedFile{content: content, digest: identity.ContentDigest, digestKnown: true}
 			}
 		}

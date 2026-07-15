@@ -95,6 +95,79 @@ func TestCountCacheMutationOracleInContainer(t *testing.T) {
 	assertTokenDelta(t, before, files.stats, "bpe_gpt_5", 1)
 }
 
+func TestVerifiedCacheRetainsWalkMembershipAfterBinaryRewriteInContainer(t *testing.T) {
+	root, store := newCountFixture(t)
+	path := filepath.Join(root, "note.txt")
+	writeTextFile(t, root, "note.txt", "ordinary text\n")
+	counter, err := tokenizer.NewCounter(tokenizer.CounterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	walk, err := fileops.WalkDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := counter.CountFilesWithCache(context.Background(), root, walk.Files, "gpt-5", false, store, cache.Verified); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, []byte{'a', 0, 'b'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := counter.CountFilesWithCache(context.Background(), root, walk.Files, "gpt-5", false, store, cache.Verified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cold, err := counter.CountFiles(context.Background(), walk.Files, "gpt-5", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.FileCount != 1 {
+		t.Fatalf("verified binary rewrite file count = %d, want 1", verified.FileCount)
+	}
+	assertJSONEqual(t, verified, cold)
+}
+
+func TestCachedCountPrunesDeletedManifestEntriesInContainer(t *testing.T) {
+	root, store := newCountFixture(t)
+	writeTextFile(t, root, "live.txt", "still here\n")
+	writeTextFile(t, root, "deleted.txt", "remove me\n")
+	counter, err := tokenizer.NewCounter(tokenizer.CounterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstWalk, err := fileops.WalkDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := counter.CountFilesWithCache(context.Background(), root, firstWalk.Files, "gpt-5", false, store, cache.Metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "deleted.txt")); err != nil {
+		t.Fatal(err)
+	}
+	currentWalk, err := fileops.WalkDirectory(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := counter.CountFilesWithCache(context.Background(), root, currentWalk.Files, "gpt-5", false, store, cache.Metadata); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Load(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Generation != 2 {
+		t.Fatalf("pruned cache generation = %d, want 2", snapshot.Generation)
+	}
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("pruned cache entries = %d, want 1", len(snapshot.Entries))
+	}
+	if _, exists := snapshot.Entries["deleted.txt"]; exists {
+		t.Fatal("deleted file remains in cache manifest")
+	}
+}
+
 func TestTimestampPreservingCountMutationMetadataIsNotExactInContainer(t *testing.T) {
 	root, store := newCountFixture(t)
 	path := filepath.Join(root, "sample.txt")

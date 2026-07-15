@@ -172,6 +172,10 @@ func (failingCacheStore) Commit(context.Context, string, uint64, cache.UpdateSet
 	return errors.New("cache commit unavailable for test")
 }
 
+func (failingCacheStore) CommitAndPrune(context.Context, string, uint64, cache.UpdateSet, cache.PruneOptions) error {
+	return errors.New("cache commit unavailable for test")
+}
+
 func (failingCacheStore) Status(context.Context, string) (cache.Status, error) {
 	return cache.Status{}, errors.New("cache status unavailable for test")
 }

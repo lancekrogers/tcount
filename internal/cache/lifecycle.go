@@ -69,6 +69,9 @@ func (store *FileStore) acquireGlobalLock(ctx context.Context) (*fileLock, error
 }
 
 func (store *FileStore) acquireLocks(ctx context.Context, location CacheLocation) (*storeLocks, error) {
+	// The global lock intentionally covers root commits as well as clear-all.
+	// This keeps the v1 lifecycle simple and safe, at the cost of serializing
+	// cached writes for different roots under one user cache parent.
 	global, err := store.acquireGlobalLock(ctx)
 	if err != nil {
 		return nil, err
@@ -272,13 +275,8 @@ func (store *FileStore) Prune(ctx context.Context, root string, options PruneOpt
 	if err != nil {
 		return 0, err
 	}
-	if !options.FullWalkSucceeded {
-		return 0, ErrPruneNotApproved
-	}
-	for path := range options.ObservedPaths {
-		if err := validatePath(path); err != nil {
-			return 0, fmt.Errorf("%w: %v", ErrInvalidSnapshot, err)
-		}
+	if err := validatePruneOptions(options); err != nil {
+		return 0, err
 	}
 	locks, err := store.acquireLocks(ctx, location)
 	if err != nil {
@@ -293,14 +291,7 @@ func (store *FileStore) Prune(ctx context.Context, root string, options PruneOpt
 	if err != nil {
 		return 0, err
 	}
-	pruned = 0
-	for path := range manifest.Entries {
-		if _, live := options.ObservedPaths[path]; live {
-			continue
-		}
-		delete(manifest.Entries, path)
-		pruned++
-	}
+	pruned = pruneManifest(&manifest, options)
 	if pruned == 0 {
 		return 0, nil
 	}
@@ -309,4 +300,28 @@ func (store *FileStore) Prune(ctx context.Context, root string, options PruneOpt
 		return 0, classifyCacheFailure("persist pruned cache manifest", location.ManifestPath, err)
 	}
 	return pruned, nil
+}
+
+func validatePruneOptions(options PruneOptions) error {
+	if !options.FullWalkSucceeded {
+		return ErrPruneNotApproved
+	}
+	for path := range options.ObservedPaths {
+		if err := validatePath(path); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidSnapshot, err)
+		}
+	}
+	return nil
+}
+
+func pruneManifest(manifest *Manifest, options PruneOptions) int {
+	pruned := 0
+	for path := range manifest.Entries {
+		if _, live := options.ObservedPaths[path]; live {
+			continue
+		}
+		delete(manifest.Entries, path)
+		pruned++
+	}
+	return pruned
 }

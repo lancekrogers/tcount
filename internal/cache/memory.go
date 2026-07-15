@@ -43,8 +43,23 @@ func (store *MemoryStore) Load(ctx context.Context, root string) (*Snapshot, err
 // Commit merges a complete or partial update set against the expected
 // generation and publishes one new complete in-memory snapshot.
 func (store *MemoryStore) Commit(ctx context.Context, root string, baseGeneration uint64, updates UpdateSet) error {
+	return store.commit(ctx, root, baseGeneration, updates, nil)
+}
+
+// CommitAndPrune applies updates and live-membership pruning atomically under
+// the in-memory store lock.
+func (store *MemoryStore) CommitAndPrune(ctx context.Context, root string, baseGeneration uint64, updates UpdateSet, options PruneOptions) error {
+	return store.commit(ctx, root, baseGeneration, updates, &options)
+}
+
+func (store *MemoryStore) commit(ctx context.Context, root string, baseGeneration uint64, updates UpdateSet, prune *PruneOptions) error {
 	if err := contextAndRoot(ctx, root); err != nil {
 		return err
+	}
+	if prune != nil {
+		if err := validatePruneOptions(*prune); err != nil {
+			return err
+		}
 	}
 
 	store.mu.Lock()
@@ -63,6 +78,13 @@ func (store *MemoryStore) Commit(ctx context.Context, root string, baseGeneratio
 	merged, err := MergeEntries(base, updates)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSnapshot, err)
+	}
+	pruned := 0
+	if prune != nil {
+		pruned = pruneManifest(&merged, *prune)
+	}
+	if prune != nil && len(updates) == 0 && pruned == 0 {
+		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err

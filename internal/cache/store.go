@@ -63,12 +63,30 @@ func (store *FileStore) Load(ctx context.Context, root string) (*Snapshot, error
 // when they add a new path or preserve the latest path identity; a stale
 // same-path identity is rejected instead of overwriting newer data.
 func (store *FileStore) Commit(ctx context.Context, root string, baseGeneration uint64, updates UpdateSet) (err error) {
+	return store.commit(ctx, root, baseGeneration, updates, nil)
+}
+
+// CommitAndPrune publishes updates and removes entries absent from a
+// successful full walk while holding one writer lock. If another writer has
+// advanced the generation since the caller's load, the updates may still be
+// merged, but pruning is skipped because the observed membership is no
+// longer authoritative for the latest generation.
+func (store *FileStore) CommitAndPrune(ctx context.Context, root string, baseGeneration uint64, updates UpdateSet, options PruneOptions) (err error) {
+	return store.commit(ctx, root, baseGeneration, updates, &options)
+}
+
+func (store *FileStore) commit(ctx context.Context, root string, baseGeneration uint64, updates UpdateSet, prune *PruneOptions) (err error) {
 	location, err := store.resolve(ctx, root)
 	if err != nil {
 		return err
 	}
 	if err := validateUpdateSet(updates); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSnapshot, err)
+	}
+	if prune != nil {
+		if err := validatePruneOptions(*prune); err != nil {
+			return err
+		}
 	}
 	locks, err := store.acquireLocks(ctx, location)
 	if err != nil {
@@ -104,6 +122,13 @@ func (store *FileStore) Commit(ctx context.Context, root string, baseGeneration 
 	merged, err := MergeEntries(latest, compatible)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSnapshot, err)
+	}
+	pruned := 0
+	if prune != nil && (recovered || latest.Generation == baseGeneration) {
+		pruned = pruneManifest(&merged, *prune)
+	}
+	if prune != nil && len(compatible) == 0 && pruned == 0 {
+		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err
