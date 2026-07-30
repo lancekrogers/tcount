@@ -1,4 +1,4 @@
-# Live directory counting progress (stderr frame → lipgloss report).
+# Live directory counting progress on a LARGE tree (multi-second run).
 # From the tcount repo root after `just build-only`:
 #   bash docs/seed-progress-demo.sh
 #   env -u NO_COLOR -u CLICOLOR CLICOLOR_FORCE=1 FORCE_COLOR=1 vhs docs/counting-progress.tape
@@ -10,8 +10,8 @@ Output docs/counting-progress.gif
 Set Shell "bash"
 Set FontFamily "JetBrainsMono Nerd Font"
 Set FontSize 16
-Set Width 920
-Set Height 520
+Set Width 960
+Set Height 420
 Set Padding 18
 Set Margin 0
 Set BorderRadius 8
@@ -22,23 +22,26 @@ Set Theme {"name":"tcount-progress","background":"#0d0d11","foreground":"#f8f8f2
 Hide
 Type `export PATH="$PWD/bin:$PATH"` Enter
 Type `export TERM=xterm-256color COLORTERM=truecolor` Enter
-# Force color even when the parent agent/CI shell exported NO_COLOR=1.
 Type `unset NO_COLOR CLICOLOR` Enter
 Type `export CLICOLOR_FORCE=1 FORCE_COLOR=1` Enter
-Type `bash docs/seed-progress-demo.sh` Enter
-Sleep 1s
+# ~2000 files / ~24MB — counting takes a few seconds so the progress frame is visible.
+Type `bash docs/seed-progress-demo.sh /tmp/tcount-progress-demo 2000` Enter
+Sleep 3s
 Type `clear` Enter
 Show
 
-Type `# recursive directory count — live progress on a TTY` Enter
-Sleep 500ms
+# Scene 1: default multi-method — watch files/chars climb for several seconds
+Type `# large tree (~2000 files) — watch live progress while counting` Enter
+Sleep 700ms
 Type `tcount -d /tmp/tcount-progress-demo` Enter
-Sleep 5s
+# Hold long enough to see mid-run progress, completion, and the final table.
+Sleep 8s
 
 Type `clear` Enter
-Sleep 300ms
+Sleep 400ms
 
-Type `# with --model: labeled live tokens while counting` Enter
-Sleep 500ms
+# Scene 2: --model so labeled tokens climb live
+Type `# same tree with --model gpt-5 (labeled live tokens)` Enter
+Sleep 700ms
 Type `tcount -d --model gpt-5 /tmp/tcount-progress-demo` Enter
-Sleep 5s
+Sleep 8s
