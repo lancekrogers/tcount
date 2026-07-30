@@ -106,6 +106,8 @@ func (p *Progress) OnProgress(u tokenizer.ProgressUpdate) {
 }
 
 // Stop ends the paint loop and clears the frame if it was painted.
+// Clear state is read only after the paint loop has fully exited so a first
+// paint that races Stop still leaves a correct lineCount for erase.
 func (p *Progress) Stop() {
 	if p == nil {
 		return
@@ -116,12 +118,15 @@ func (p *Progress) Stop() {
 		return
 	}
 	p.stopped = true
-	painted := p.painted
-	lines := p.lineCount
 	p.mu.Unlock()
 
 	close(p.stopCh)
 	<-p.doneCh
+
+	p.mu.Lock()
+	painted := p.painted
+	lines := p.lineCount
+	p.mu.Unlock()
 
 	if painted {
 		p.clear(lines)
@@ -179,15 +184,15 @@ func (p *Progress) tick() {
 	}
 	p.spinIdx = (p.spinIdx + 1) % len(spinnerFrames)
 	spin := spinnerFrames[p.spinIdx]
-	already := p.painted
-	p.painted = true
 	p.mu.Unlock()
 
+	// Write first, then publish painted/lineCount so Stop never clears with a
+	// stale lineCount of 0 after a completed first frame.
 	lines := p.render(spin, elapsed, u)
 	p.mu.Lock()
+	p.painted = true
 	p.lineCount = lines
 	p.mu.Unlock()
-	_ = already
 }
 
 func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.ProgressUpdate) int {
@@ -204,6 +209,8 @@ func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.Progre
 	if root == "" {
 		root = "."
 	}
+	// Keep header on one logical line on narrow TTYs (matches last-path clip).
+	rootDisplay := truncateMiddle(root, 40)
 	done := u.FilesDone
 	total := u.FilesTotal
 	if total == 0 {
@@ -213,7 +220,7 @@ func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.Progre
 	header := fmt.Sprintf(
 		"  %s counting  %s  %s  %d/%d files  %s  %s",
 		purple.Render(spin),
-		bold.Render(root),
+		bold.Render(rootDisplay),
 		dim.Render("·"),
 		done,
 		total,
@@ -291,8 +298,14 @@ func shortenPath(path, root string, maxLen int) string {
 	if rel, err := filepath.Rel(root, path); err == nil && rel != "" && !strings.HasPrefix(rel, "..") {
 		path = rel
 	}
+	return truncateMiddle(path, maxLen)
+}
+
+// truncateMiddle shortens a display path with an ellipsis in the middle so
+// fixed-line ANSI rewrites do not leave wrap residue on narrow terminals.
+func truncateMiddle(path string, maxLen int) string {
 	path = filepath.ToSlash(path)
-	if utf8.RuneCountInString(path) <= maxLen {
+	if maxLen <= 1 || utf8.RuneCountInString(path) <= maxLen {
 		return path
 	}
 	runes := []rune(path)

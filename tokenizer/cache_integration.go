@@ -51,9 +51,18 @@ func (c *Counter) CountFilesWithCacheOptions(ctx context.Context, root string, f
 		return c.CountFilesWithOptions(ctx, files, opts)
 	}
 	progress := newProgressTracker(opts.OnProgress, len(files), len(plans))
-	if err := reportCacheHits(state, plans, contracts, progress); err != nil {
+	// After any progress callbacks may have fired, cold fallbacks must not
+	// attach the same OnProgress (new tracker would restart 1/N visually).
+	coldAfterProgress := func() (*CountResult, error) {
 		c.stats.RecordCacheWarning()
-		return c.CountFilesWithOptions(ctx, files, opts)
+		cold := opts
+		if progress != nil {
+			cold.OnProgress = nil
+		}
+		return c.CountFilesWithOptions(ctx, files, cold)
+	}
+	if err := reportCacheHits(state, plans, contracts, progress); err != nil {
+		return coldAfterProgress()
 	}
 	missPaths, selected := c.scheduleCacheMisses(state, contractIndexes, len(files))
 	freshResults, err := c.countFileResults(ctx, missPaths, plans, allMode, selected, state.validated, progress)
@@ -62,8 +71,7 @@ func (c *Counter) CountFilesWithCacheOptions(ctx context.Context, root string, f
 	}
 	results, updates, err := materializeCacheResults(state, plans, contracts, missPaths, freshResults)
 	if err != nil {
-		c.stats.RecordCacheWarning()
-		return c.CountFilesWithOptions(ctx, files, opts)
+		return coldAfterProgress()
 	}
 	result, err := c.aggregateFileResults(ctx, results, plans, includeApprox)
 	if err != nil {

@@ -159,3 +159,96 @@ func TestFormatProgressInt(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestTruncateMiddleRootDisplay(t *testing.T) {
+	t.Parallel()
+	long := "/Users/example/very/deep/nested/path/to/project/src"
+	got := truncateMiddle(long, 40)
+	if len([]rune(got)) > 40 {
+		t.Fatalf("len %d > 40: %q", len([]rune(got)), got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Fatalf("expected ellipsis, got %q", got)
+	}
+}
+
+// blockingWriter blocks the first Write until release is closed, then copies
+// into buf. Used to interleave Stop with an in-flight first paint.
+type blockingWriter struct {
+	buf     *bytes.Buffer
+	started chan struct{}
+	release chan struct{}
+	once    bool
+}
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	if !w.once {
+		w.once = true
+		close(w.started)
+		<-w.release
+	}
+	return w.buf.Write(p)
+}
+
+func TestProgressStopClearsAfterFirstPaintRace(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	started := make(chan struct{})
+	release := make(chan struct{})
+	w := &blockingWriter{buf: &buf, started: started, release: release}
+
+	p := NewProgress(ProgressOptions{
+		Out:        w,
+		Root:       "/Users/example/very/long/absolute/path/to/project",
+		FilesTotal: 5,
+		PaintDelay: 5 * time.Millisecond,
+		NoColor:    true,
+	})
+	p.Arm()
+	p.OnProgress(tokenizer.ProgressUpdate{
+		FilesTotal: 5,
+		FilesDone:  2,
+		Characters: 20,
+		Words:      4,
+		Lines:      2,
+		LastPath:   "a.go",
+	})
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first paint write")
+	}
+
+	// Stop while the first frame write is blocked mid-flight.
+	done := make(chan struct{})
+	go func() {
+		p.Stop()
+		close(done)
+	}()
+
+	// Let the first write finish and the paint loop exit.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "counting") {
+		t.Fatalf("expected a painted frame before clear, got %q", out)
+	}
+	// After clear, the final buffer should contain cursor-up / clear sequences
+	// (not leave an uncleared frame with no erase).
+	if !strings.Contains(out, "\033[") {
+		t.Fatalf("expected ANSI clear sequences after Stop, got %q", out)
+	}
+	// lineCount was 3 after paint; clear emits 3A at least once after content.
+	if !strings.Contains(out, "\033[3A") {
+		t.Fatalf("expected clear for 3-line frame, got %q", out)
+	}
+}
