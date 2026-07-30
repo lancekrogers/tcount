@@ -1,7 +1,7 @@
 # Live directory counting progress (stderr frame → lipgloss report).
 # From the tcount repo root after `just build-only`:
 #   bash docs/seed-progress-demo.sh
-#   vhs docs/counting-progress.tape
+#   env -u NO_COLOR -u CLICOLOR CLICOLOR_FORCE=1 FORCE_COLOR=1 vhs docs/counting-progress.tape
 #
 # Output: docs/counting-progress.gif
 
@@ -22,7 +22,9 @@ Set Theme {"name":"tcount-progress","background":"#0d0d11","foreground":"#f8f8f2
 Hide
 Type `export PATH="$PWD/bin:$PATH"` Enter
 Type `export TERM=xterm-256color COLORTERM=truecolor` Enter
-Type `unset NO_COLOR` Enter
+# Force color even when the parent agent/CI shell exported NO_COLOR=1.
+Type `unset NO_COLOR CLICOLOR` Enter
+Type `export CLICOLOR_FORCE=1 FORCE_COLOR=1` Enter
 Type `bash docs/seed-progress-demo.sh` Enter
 Sleep 1s
 Type `clear` Enter
