@@ -20,36 +20,58 @@ import (
 // caller's successful current walk; the manifest never supplies membership.
 // The cache is deliberately an explicit caller choice; CountFiles remains the
 // cold-path oracle.
+//
+// CountFilesWithCache is equivalent to CountFilesWithCacheOptions with a nil OnProgress.
 func (c *Counter) CountFilesWithCache(ctx context.Context, root string, files []string, model string, all bool, store cache.Store, mode cache.ValidationMode) (*CountResult, error) {
+	return c.CountFilesWithCacheOptions(ctx, root, files, CountFilesOptions{Model: model, All: all}, store, mode)
+}
+
+// CountFilesWithCacheOptions is CountFilesWithCache with optional progress reporting.
+// Cache hits are reported as completed files before cold misses are counted so the
+// progress total advances through a warm tree without stalling.
+func (c *Counter) CountFilesWithCacheOptions(ctx context.Context, root string, files []string, opts CountFilesOptions, store cache.Store, mode cache.ValidationMode) (*CountResult, error) {
 	if store == nil {
-		return c.CountFiles(ctx, files, model, all)
+		return c.CountFilesWithOptions(ctx, files, opts)
 	}
 	if err := validateCacheRequest(ctx, files, mode); err != nil {
 		return nil, err
 	}
-	plans, includeApprox, err := c.planMethods(model, all)
+	plans, includeApprox, err := c.planMethods(opts.Model, opts.All)
 	if err != nil {
-		return nil, fmt.Errorf("counting tokens for model %q: %w", model, err)
+		return nil, fmt.Errorf("counting tokens for model %q: %w", opts.Model, err)
 	}
-	allMode := all || model == ""
+	allMode := opts.All || opts.Model == ""
 	contracts, contractIndexes, cacheable := cacheContracts(plans)
 	if !cacheable {
-		return c.CountFiles(ctx, files, model, all)
+		return c.CountFilesWithOptions(ctx, files, opts)
 	}
 	state, err := c.prepareCacheCount(ctx, root, files, contracts, mode, store)
 	if err != nil {
 		c.stats.RecordCacheWarning()
-		return c.CountFiles(ctx, files, model, all)
+		return c.CountFilesWithOptions(ctx, files, opts)
+	}
+	progress := newProgressTracker(opts.OnProgress, len(files), len(plans))
+	// After any progress callbacks may have fired, cold fallbacks must not
+	// attach the same OnProgress (new tracker would restart 1/N visually).
+	coldAfterProgress := func() (*CountResult, error) {
+		c.stats.RecordCacheWarning()
+		cold := opts
+		if progress != nil {
+			cold.OnProgress = nil
+		}
+		return c.CountFilesWithOptions(ctx, files, cold)
+	}
+	if err := reportCacheHits(state, plans, contracts, progress); err != nil {
+		return coldAfterProgress()
 	}
 	missPaths, selected := c.scheduleCacheMisses(state, contractIndexes, len(files))
-	freshResults, err := c.countFileResults(ctx, missPaths, plans, allMode, selected, state.validated)
+	freshResults, err := c.countFileResults(ctx, missPaths, plans, allMode, selected, state.validated, progress)
 	if err != nil {
 		return nil, err
 	}
 	results, updates, err := materializeCacheResults(state, plans, contracts, missPaths, freshResults)
 	if err != nil {
-		c.stats.RecordCacheWarning()
-		return c.CountFiles(ctx, files, model, all)
+		return coldAfterProgress()
 	}
 	result, err := c.aggregateFileResults(ctx, results, plans, includeApprox)
 	if err != nil {
@@ -59,6 +81,28 @@ func (c *Counter) CountFilesWithCache(ctx context.Context, root string, files []
 		return nil, err
 	}
 	return result, nil
+}
+
+// reportCacheHits emits progress for complete cache hits before cold counting.
+func reportCacheHits(state *cacheCountState, plans []methodPlan, contracts []cache.ContractKey, progress *progressTracker) error {
+	if progress == nil {
+		return nil
+	}
+	for _, decision := range state.plan.Decisions {
+		if decision.Kind != cache.DecisionHit {
+			continue
+		}
+		result, err := cacheEntryToPerFileResult(state.snapshot.Entries[decision.Path], plans, contracts, decision.ReusableMethods)
+		if err != nil {
+			return err
+		}
+		path := state.absolutePaths[decision.Path]
+		if path == "" {
+			path = decision.Path
+		}
+		progress.add(path, result)
+	}
+	return nil
 }
 
 type cacheCountState struct {

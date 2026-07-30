@@ -184,7 +184,14 @@ func (c *Counter) CountDirectory(ctx context.Context, path string, model string,
 // across file boundaries, and word counts stay correct when a file lacks a
 // trailing newline. Files are processed on a bounded worker pool; sums are
 // order-independent so results are deterministic.
+//
+// CountFiles is equivalent to CountFilesWithOptions with a nil OnProgress.
 func (c *Counter) CountFiles(ctx context.Context, files []string, model string, all bool) (*CountResult, error) {
+	return c.CountFilesWithOptions(ctx, files, CountFilesOptions{Model: model, All: all})
+}
+
+// CountFilesWithOptions is CountFiles with optional progress reporting.
+func (c *Counter) CountFilesWithOptions(ctx context.Context, files []string, opts CountFilesOptions) (*CountResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -192,13 +199,14 @@ func (c *Counter) CountFiles(ctx context.Context, files []string, model string, 
 		return nil, fmt.Errorf("no files to count")
 	}
 
-	plans, includeApprox, err := c.planMethods(model, all)
+	plans, includeApprox, err := c.planMethods(opts.Model, opts.All)
 	if err != nil {
-		return nil, fmt.Errorf("counting tokens for model %q: %w", model, err)
+		return nil, fmt.Errorf("counting tokens for model %q: %w", opts.Model, err)
 	}
-	allMode := all || model == ""
+	allMode := opts.All || opts.Model == ""
+	progress := newProgressTracker(opts.OnProgress, len(files), len(plans))
 
-	results, err := c.countFileResults(ctx, files, plans, allMode, nil, nil)
+	results, err := c.countFileResults(ctx, files, plans, allMode, nil, nil, progress)
 	if err != nil {
 		return nil, err
 	}

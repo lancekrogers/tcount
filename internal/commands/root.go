@@ -31,6 +31,7 @@ type countOptions struct {
 	cache         bool
 	noCache       bool
 	cacheVerify   bool
+	noProgress    bool
 	noColor       bool
 	verbose       bool
 	stats         *tokenizer.Stats
@@ -139,6 +140,7 @@ Download vocab files from HuggingFace (see error messages for URLs)`)
 	cmd.Flags().BoolVar(&opts.cache, "cache", false, "enable experimental persistent cache for recursive directories")
 	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "force cold counting without reading or writing cache state")
 	cmd.Flags().BoolVar(&opts.cacheVerify, "cache-verify", false, "hash file contents before reusing cached directory results (requires --cache)")
+	cmd.Flags().BoolVar(&opts.noProgress, "no-progress", false, "disable live counting progress on the terminal")
 	cmd.Flags().Float64Var(&opts.charsPerToken, "chars-per-token", tokenizer.DefaultCharsPerToken, "characters per token ratio")
 	cmd.Flags().Float64Var(&opts.wordsPerToken, "words-per-token", tokenizer.DefaultWordsPerToken, "words per token ratio")
 }
@@ -216,19 +218,43 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 
 	var result *tokenizer.CountResult
 	if isDirectory {
+		countOpts := tokenizer.CountFilesOptions{
+			Model: opts.model,
+			All:   opts.all,
+		}
+		var progress *ui.Progress
+		if ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
+			progress = ui.NewProgress(ui.ProgressOptions{
+				Root:       path,
+				FilesTotal: len(walkFiles),
+				Model:      opts.model,
+				NoColor:    opts.noColor,
+			})
+			progress.Arm()
+			countOpts.OnProgress = progress.OnProgress
+		}
+		// Stop and clear the progress frame before any final stdout report.
+		stopProgress := func() {
+			if progress != nil {
+				progress.Stop()
+				progress = nil
+			}
+		}
 		if opts.cache {
 			store, storeErr := newCacheStore()
 			if storeErr != nil {
+				stopProgress()
 				return errors.Wrap(storeErr, "creating cache store")
 			}
 			mode := cache.Metadata
 			if opts.cacheVerify {
 				mode = cache.Verified
 			}
-			result, err = counter.CountFilesWithCache(ctx, path, walkFiles, opts.model, opts.all, store, mode)
+			result, err = counter.CountFilesWithCacheOptions(ctx, path, walkFiles, countOpts, store, mode)
 		} else {
-			result, err = counter.CountFiles(ctx, walkFiles, opts.model, opts.all)
+			result, err = counter.CountFilesWithOptions(ctx, walkFiles, countOpts)
 		}
+		stopProgress()
 	} else {
 		result, err = counter.Count(ctx, string(content), opts.model, opts.all)
 	}

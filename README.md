@@ -7,7 +7,13 @@
 
 A fast token counter for LLM workflows that runs entirely on your machine: no API keys, no network calls, nothing leaves your disk. Count with exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation, from a single CLI or as a Go library.
 
-![tcount demo: default method table, --model context usage, and a recursive directory scan](https://raw.githubusercontent.com/lancekrogers/tcount/main/docs/demo.gif)
+**Single file** — method table, `--model` context usage:
+
+![tcount demo: default method table and --model context usage on a single file](docs/demo.gif)
+
+**Directory** — live progress while a large tree is counted, then the final report:
+
+![tcount live directory counting progress: spinner, rising file counts and stats, then the lipgloss report](docs/counting-progress.gif)
 
 ## Features
 
@@ -20,6 +26,7 @@ A fast token counter for LLM workflows that runs entirely on your machine: no AP
 - **Context window usage** — see what percentage of a model's context you're consuming (shown when you pass `--model`)
 - **Provider filtering** — compare models from a specific provider
 - **Directory scanning** — `.gitignore`-aware, skips binaries, counts files in parallel with memory bounded by your largest file
+- **Live counting progress** — on a TTY, recursive counts show a spinner and rising file/char totals while work runs (disable with `--no-progress`; never shown for `--json`)
 - **JSON output** for scripting and pipelines
 - **Experimental directory cache** — opt-in reuse for repeated recursive counts, with status, clear, verification, and bypass controls
 
@@ -76,8 +83,11 @@ tcount --all prompt.md
 # Filter by provider
 tcount --provider openai prompt.md
 
-# Count an entire directory tree
+# Count an entire directory tree (TTY shows live progress while counting)
 tcount -d ./src
+
+# Same count without the progress frame
+tcount -d --no-progress ./src
 
 # JSON output for scripting
 tcount --json document.md
@@ -231,15 +241,21 @@ Without `--vocab-file`, Llama models use a tiktoken-based approximation.
 
 ### Directory scanning
 
-Point tcount at a project directory to count every text file in one pass:
+Point tcount at a project directory to count every text file in one pass. On a TTY, large trees show **live progress** (spinner, files done/total, rising stats) on stderr, then the usual report on stdout:
 
-![tcount directory demo: inspect a source tree with eza, then count the complete directory with tcount -d](docs/directory-demo.gif)
+![tcount live directory counting progress on a large tree](docs/counting-progress.gif)
 
 ```bash
+tcount -d ./src
+
+# same count without the progress frame
+tcount -d --no-progress ./src
+
+# optional scan/cache diagnostics on stderr
 tcount -d --verbose ./src
 ```
 
-When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Use `--verbose` to see the scan and cache summary on stderr.
+When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Progress is omitted for `--json`, non-TTY stderr, and `--no-progress`.
 
 ### Experimental directory cache
 
