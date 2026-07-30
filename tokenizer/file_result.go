@@ -121,7 +121,7 @@ func allMethodIndices(count int) []int {
 	return indices
 }
 
-func (c *Counter) countFileResults(ctx context.Context, files []string, plans []methodPlan, allMode bool, selected map[string][]int, validated map[string]cacheValidatedFile) ([]perFileResult, error) {
+func (c *Counter) countFileResults(ctx context.Context, files []string, plans []methodPlan, allMode bool, selected map[string][]int, validated map[string]cacheValidatedFile, progress *progressTracker) ([]perFileResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -195,6 +195,7 @@ dispatch:
 				return
 			}
 			results[index] = result
+			progress.add(path, result)
 		}(index, file)
 	}
 	wg.Wait()

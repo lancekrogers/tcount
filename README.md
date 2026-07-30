@@ -9,6 +9,8 @@ A fast token counter for LLM workflows that runs entirely on your machine: no AP
 
 ![tcount demo: default method table, --model context usage, and a recursive directory scan](https://raw.githubusercontent.com/lancekrogers/tcount/main/docs/demo.gif)
 
+![tcount live directory counting progress: spinner and rising totals, then the final lipgloss report](docs/counting-progress.gif)
+
 ## Features
 
 - **100% local** — counting never touches the network, so it is safe for private codebases, unreleased prompts, and air-gapped machines
@@ -20,6 +22,7 @@ A fast token counter for LLM workflows that runs entirely on your machine: no AP
 - **Context window usage** — see what percentage of a model's context you're consuming (shown when you pass `--model`)
 - **Provider filtering** — compare models from a specific provider
 - **Directory scanning** — `.gitignore`-aware, skips binaries, counts files in parallel with memory bounded by your largest file
+- **Live counting progress** — on a TTY, recursive counts show a spinner and rising file/char totals while work runs (disable with `--no-progress`; never shown for `--json`)
 - **JSON output** for scripting and pipelines
 - **Experimental directory cache** — opt-in reuse for repeated recursive counts, with status, clear, verification, and bypass controls
 
@@ -76,8 +79,11 @@ tcount --all prompt.md
 # Filter by provider
 tcount --provider openai prompt.md
 
-# Count an entire directory tree
+# Count an entire directory tree (TTY shows live progress while counting)
 tcount -d ./src
+
+# Same count without the progress frame
+tcount -d --no-progress ./src
 
 # JSON output for scripting
 tcount --json document.md
