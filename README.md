@@ -7,9 +7,13 @@
 
 A fast token counter for LLM workflows that runs entirely on your machine: no API keys, no network calls, nothing leaves your disk. Count with exact OpenAI tokenizers, Claude and Gemini approximations, SentencePiece vocabularies, and generic estimation, from a single CLI or as a Go library.
 
-![tcount demo: default method table, --model context usage, and a recursive directory scan](https://raw.githubusercontent.com/lancekrogers/tcount/main/docs/demo.gif)
+**Single file** — method table, `--model` context usage:
 
-![tcount live directory counting progress: spinner and rising totals, then the final lipgloss report](docs/counting-progress.gif)
+![tcount demo: default method table and --model context usage on a single file](docs/demo.gif)
+
+**Directory** — live progress while a large tree is counted, then the final report:
+
+![tcount live directory counting progress: spinner, rising file counts and stats, then the lipgloss report](docs/counting-progress.gif)
 
 ## Features
 
@@ -237,15 +241,21 @@ Without `--vocab-file`, Llama models use a tiktoken-based approximation.
 
 ### Directory scanning
 
-Point tcount at a project directory to count every text file in one pass:
+Point tcount at a project directory to count every text file in one pass. On a TTY, large trees show **live progress** (spinner, files done/total, rising stats) on stderr, then the usual report on stdout:
 
-![tcount directory demo: inspect a source tree with eza, then count the complete directory with tcount -d](docs/directory-demo.gif)
+![tcount live directory counting progress on a large tree](docs/counting-progress.gif)
 
 ```bash
+tcount -d ./src
+
+# same count without the progress frame
+tcount -d --no-progress ./src
+
+# optional scan/cache diagnostics on stderr
 tcount -d --verbose ./src
 ```
 
-When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Use `--verbose` to see the scan and cache summary on stderr.
+When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Progress is omitted for `--json`, non-TTY stderr, and `--no-progress`.
 
 ### Experimental directory cache
 
