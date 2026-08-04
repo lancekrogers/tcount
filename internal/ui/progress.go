@@ -38,21 +38,21 @@ type Progress struct {
 	out        io.Writer
 	noColor    bool
 	root       string
-	filesTotal int
 	model      string
 	paintDelay time.Duration
 
 	start time.Time
 
-	mu       sync.Mutex
-	latest   tokenizer.ProgressUpdate
-	hasData  bool
-	painted  bool
-	stopped  bool
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	spinIdx  int
-	lineCount int
+	mu         sync.Mutex
+	latest     tokenizer.ProgressUpdate
+	filesTotal int
+	hasData    bool
+	painted    bool
+	stopped    bool
+	stopCh     chan struct{}
+	doneCh     chan struct{}
+	spinIdx    int
+	lineCount  int
 }
 
 // NewProgress builds a progress controller. Call Arm before counting; Stop when done.
@@ -102,6 +102,18 @@ func (p *Progress) OnProgress(u tokenizer.ProgressUpdate) {
 	p.mu.Lock()
 	p.latest = u
 	p.hasData = true
+	p.mu.Unlock()
+}
+
+// SetFilesTotal records the discovered file count and ends the discovery phase.
+// A known total (here or via ProgressOptions.FilesTotal) is enough to leave the
+// "scanning … discovering files" frame even before the first OnProgress update.
+func (p *Progress) SetFilesTotal(total int) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.filesTotal = total
 	p.mu.Unlock()
 }
 
@@ -174,10 +186,7 @@ func (p *Progress) tick() {
 		p.mu.Unlock()
 		return
 	}
-	if !p.hasData && p.filesTotal == 0 {
-		p.mu.Unlock()
-		return
-	}
+	hasData := p.hasData
 	u := p.latest
 	if u.FilesTotal == 0 {
 		u.FilesTotal = p.filesTotal
@@ -188,14 +197,14 @@ func (p *Progress) tick() {
 
 	// Write first, then publish painted/lineCount so Stop never clears with a
 	// stale lineCount of 0 after a completed first frame.
-	lines := p.render(spin, elapsed, u)
+	lines := p.render(spin, elapsed, u, hasData)
 	p.mu.Lock()
 	p.painted = true
 	p.lineCount = lines
 	p.mu.Unlock()
 }
 
-func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.ProgressUpdate) int {
+func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.ProgressUpdate, hasData bool) int {
 	purple := lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	bold := lipgloss.NewStyle().Bold(true)
@@ -213,8 +222,21 @@ func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.Progre
 	rootDisplay := truncateMiddle(root, 40)
 	done := u.FilesDone
 	total := u.FilesTotal
-	if total == 0 {
-		total = p.filesTotal
+	// Discovery ends once a file total is known (SetFilesTotal / ProgressOptions)
+	// or the first OnProgress arrives. A known total alone must paint counting
+	// (including 0/N), not keep claiming files are still being discovered.
+	discovering := !hasData && total == 0
+	if discovering {
+		frame := []string{fmt.Sprintf(
+			"  %s scanning  %s  %s  discovering files  %s  %s",
+			purple.Render(spin),
+			bold.Render(rootDisplay),
+			dim.Render("·"),
+			dim.Render("·"),
+			fmt.Sprintf("%.1fs", elapsed.Seconds()),
+		)}
+		p.writeFrame(frame)
+		return len(frame)
 	}
 
 	header := fmt.Sprintf(

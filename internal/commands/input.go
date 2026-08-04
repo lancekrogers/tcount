@@ -39,7 +39,13 @@ func validateStdinFlags(path string, opts *countOptions) error {
 }
 
 // resolveInput loads content from stdin, a single file, or walks a directory.
-func resolveInput(ctx context.Context, path string, opts *countOptions, _ *ui.UI) (content []byte, walkFiles []string, isDirectory bool, err error) {
+func resolveInput(
+	ctx context.Context,
+	path string,
+	opts *countOptions,
+	_ *ui.UI,
+	onDirectoryWalkStart func(),
+) (content []byte, walkFiles []string, isDirectory bool, err error) {
 	if isStdinSource(path) {
 		content, err = readStdin(ctx)
 		if err != nil {
@@ -63,6 +69,9 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, _ *ui.UI
 
 	if !opts.recursive {
 		return nil, nil, true, errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
+	}
+	if onDirectoryWalkStart != nil {
+		onDirectoryWalkStart()
 	}
 
 	var walkResult *fileops.WalkResult
