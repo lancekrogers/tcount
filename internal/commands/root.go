@@ -193,7 +193,10 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		display.Warning("Unknown model '%s', using approximation methods", opts.model)
 	}
 
-	content, walkFiles, isDirectory, err := resolveInput(ctx, path, opts, display)
+	startDirectoryProgress, stopProgress, attachDirectoryProgress := armDirectoryProgress(path, opts)
+	defer stopProgress()
+
+	content, walkFiles, isDirectory, err := resolveInput(ctx, path, opts, display, startDirectoryProgress)
 	if err != nil {
 		return err
 	}
@@ -222,24 +225,7 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 			Model: opts.model,
 			All:   opts.all,
 		}
-		var progress *ui.Progress
-		if ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
-			progress = ui.NewProgress(ui.ProgressOptions{
-				Root:       path,
-				FilesTotal: len(walkFiles),
-				Model:      opts.model,
-				NoColor:    opts.noColor,
-			})
-			progress.Arm()
-			countOpts.OnProgress = progress.OnProgress
-		}
-		// Stop and clear the progress frame before any final stdout report.
-		stopProgress := func() {
-			if progress != nil {
-				progress.Stop()
-				progress = nil
-			}
-		}
+		attachDirectoryProgress(walkFiles, &countOpts)
 		if opts.cache {
 			store, storeErr := newCacheStore()
 			if storeErr != nil {
@@ -275,6 +261,40 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	}
 
 	return outputTable(result, opts.showModels)
+}
+
+// armDirectoryProgress returns lifecycle hooks for recursive directory counts.
+// start is invoked once resolveInput confirms a recursive walk; attach ends
+// discovery with the walked file total and wires OnProgress; stop clears any
+// painted frame (safe to call more than once).
+func armDirectoryProgress(path string, opts *countOptions) (start, stop func(), attach func([]string, *tokenizer.CountFilesOptions)) {
+	var progress *ui.Progress
+	stop = func() {
+		if progress != nil {
+			progress.Stop()
+			progress = nil
+		}
+	}
+	start = func() {
+		if !ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
+			return
+		}
+		progress = ui.NewProgress(ui.ProgressOptions{
+			Root:    path,
+			Model:   opts.model,
+			NoColor: opts.noColor,
+		})
+		progress.Arm()
+	}
+	attach = func(walkFiles []string, countOpts *tokenizer.CountFilesOptions) {
+		if progress == nil || countOpts == nil {
+			return
+		}
+		// Ends discovery immediately so the UI does not claim scanning after the walk.
+		progress.SetFilesTotal(len(walkFiles))
+		countOpts.OnProgress = progress.OnProgress
+	}
+	return start, stop, attach
 }
 
 func validateCacheFlags(opts *countOptions) error {
@@ -322,7 +342,7 @@ func newCacheStore() (*cache.FileStore, error) {
 
 // resolveInput stats the path and loads the single file's content or walks
 // the directory for its file list.
-func resolveInput(ctx context.Context, path string, opts *countOptions, display *ui.UI) (content []byte, walkFiles []string, isDirectory bool, err error) {
+func resolveInput(ctx context.Context, path string, opts *countOptions, display *ui.UI, onDirectoryWalkStart func()) (content []byte, walkFiles []string, isDirectory bool, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, nil, false, errors.IO("accessing path", err).WithField("path", path)
@@ -338,6 +358,9 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, display 
 
 	if !opts.recursive {
 		return nil, nil, true, errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
+	}
+	if onDirectoryWalkStart != nil {
+		onDirectoryWalkStart()
 	}
 
 	var walkResult *fileops.WalkResult

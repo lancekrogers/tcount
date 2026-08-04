@@ -4,11 +4,29 @@ import (
 	"bytes"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lancekrogers/tcount/tokenizer"
 )
+
+type synchronizedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(data)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func TestShouldShowProgress(t *testing.T) {
 	t.Parallel()
@@ -118,6 +136,95 @@ func TestProgressPaintsAfterDelay(t *testing.T) {
 	}
 	if !strings.Contains(out, "chars") {
 		t.Fatalf("expected chars, got %q", out)
+	}
+}
+
+func TestProgressPaintsDirectoryDiscoveryBeforeCount(t *testing.T) {
+	t.Parallel()
+
+	var buf synchronizedBuffer
+	p := NewProgress(ProgressOptions{
+		Out:        &buf,
+		Root:       ".",
+		PaintDelay: 10 * time.Millisecond,
+		NoColor:    true,
+	})
+	p.Arm()
+	time.Sleep(30 * time.Millisecond)
+
+	scanning := buf.String()
+	if !strings.Contains(scanning, "scanning") || !strings.Contains(scanning, "discovering files") {
+		t.Fatalf("expected directory discovery frame before count updates, got %q", scanning)
+	}
+
+	p.SetFilesTotal(2)
+	p.OnProgress(tokenizer.ProgressUpdate{
+		FilesTotal: 2,
+		FilesDone:  1,
+		Characters: 10,
+		Words:      2,
+		Lines:      1,
+		LastPath:   "a.txt",
+	})
+	time.Sleep(100 * time.Millisecond)
+	p.Stop()
+
+	out := buf.String()
+	if !strings.Contains(out, "counting") || !strings.Contains(out, "1/2 files") {
+		t.Fatalf("expected counting frame after directory discovery, got %q", out)
+	}
+}
+
+func TestProgressSetFilesTotalEndsDiscoveryWithoutOnProgress(t *testing.T) {
+	t.Parallel()
+
+	var buf synchronizedBuffer
+	p := NewProgress(ProgressOptions{
+		Out:        &buf,
+		Root:       ".",
+		PaintDelay: 10 * time.Millisecond,
+		NoColor:    true,
+	})
+	p.Arm()
+	time.Sleep(30 * time.Millisecond)
+
+	if got := buf.String(); !strings.Contains(got, "discovering files") {
+		t.Fatalf("expected discovery frame before total is known, got %q", got)
+	}
+
+	// Walk finished: known total must leave discovery even before any file count.
+	p.SetFilesTotal(2)
+	// Wait at least one paint-interval tick (~1/12s) so the frame refreshes.
+	time.Sleep(120 * time.Millisecond)
+	p.Stop()
+
+	out := buf.String()
+	if !strings.Contains(out, "counting") || !strings.Contains(out, "0/2 files") {
+		t.Fatalf("expected counting 0/2 files after SetFilesTotal without OnProgress, got %q", out)
+	}
+}
+
+func TestProgressOptionsFilesTotalSkipsDiscoveryFrame(t *testing.T) {
+	t.Parallel()
+
+	var buf synchronizedBuffer
+	p := NewProgress(ProgressOptions{
+		Out:        &buf,
+		Root:       "./src",
+		FilesTotal: 3,
+		PaintDelay: 10 * time.Millisecond,
+		NoColor:    true,
+	})
+	p.Arm()
+	time.Sleep(40 * time.Millisecond)
+	p.Stop()
+
+	out := buf.String()
+	if strings.Contains(out, "discovering files") {
+		t.Fatalf("ProgressOptions.FilesTotal should end discovery immediately, got %q", out)
+	}
+	if !strings.Contains(out, "counting") || !strings.Contains(out, "0/3 files") {
+		t.Fatalf("expected counting 0/3 with constructor FilesTotal, got %q", out)
 	}
 }
 
