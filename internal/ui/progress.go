@@ -105,8 +105,9 @@ func (p *Progress) OnProgress(u tokenizer.ProgressUpdate) {
 	p.mu.Unlock()
 }
 
-// SetFilesTotal transitions progress from directory discovery to counting.
-// The total is unknown until the directory walk completes.
+// SetFilesTotal records the discovered file count and ends the discovery phase.
+// A known total (here or via ProgressOptions.FilesTotal) is enough to leave the
+// "scanning … discovering files" frame even before the first OnProgress update.
 func (p *Progress) SetFilesTotal(total int) {
 	if p == nil {
 		return
@@ -219,7 +220,13 @@ func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.Progre
 	}
 	// Keep header on one logical line on narrow TTYs (matches last-path clip).
 	rootDisplay := truncateMiddle(root, 40)
-	if !hasData {
+	done := u.FilesDone
+	total := u.FilesTotal
+	// Discovery ends once a file total is known (SetFilesTotal / ProgressOptions)
+	// or the first OnProgress arrives. A known total alone must paint counting
+	// (including 0/N), not keep claiming files are still being discovered.
+	discovering := !hasData && total == 0
+	if discovering {
 		frame := []string{fmt.Sprintf(
 			"  %s scanning  %s  %s  discovering files  %s  %s",
 			purple.Render(spin),
@@ -231,9 +238,6 @@ func (p *Progress) render(spin string, elapsed time.Duration, u tokenizer.Progre
 		p.writeFrame(frame)
 		return len(frame)
 	}
-
-	done := u.FilesDone
-	total := u.FilesTotal
 
 	header := fmt.Sprintf(
 		"  %s counting  %s  %s  %d/%d files  %s  %s",

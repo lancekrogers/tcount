@@ -193,24 +193,7 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		display.Warning("Unknown model '%s', using approximation methods", opts.model)
 	}
 
-	var progress *ui.Progress
-	startDirectoryProgress := func() {
-		if !ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
-			return
-		}
-		progress = ui.NewProgress(ui.ProgressOptions{
-			Root:    path,
-			Model:   opts.model,
-			NoColor: opts.noColor,
-		})
-		progress.Arm()
-	}
-	stopProgress := func() {
-		if progress != nil {
-			progress.Stop()
-			progress = nil
-		}
-	}
+	startDirectoryProgress, stopProgress, attachDirectoryProgress := armDirectoryProgress(path, opts)
 	defer stopProgress()
 
 	content, walkFiles, isDirectory, err := resolveInput(ctx, path, opts, display, startDirectoryProgress)
@@ -242,10 +225,7 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 			Model: opts.model,
 			All:   opts.all,
 		}
-		if progress != nil {
-			progress.SetFilesTotal(len(walkFiles))
-			countOpts.OnProgress = progress.OnProgress
-		}
+		attachDirectoryProgress(walkFiles, &countOpts)
 		if opts.cache {
 			store, storeErr := newCacheStore()
 			if storeErr != nil {
@@ -281,6 +261,40 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	}
 
 	return outputTable(result, opts.showModels)
+}
+
+// armDirectoryProgress returns lifecycle hooks for recursive directory counts.
+// start is invoked once resolveInput confirms a recursive walk; attach ends
+// discovery with the walked file total and wires OnProgress; stop clears any
+// painted frame (safe to call more than once).
+func armDirectoryProgress(path string, opts *countOptions) (start, stop func(), attach func([]string, *tokenizer.CountFilesOptions)) {
+	var progress *ui.Progress
+	stop = func() {
+		if progress != nil {
+			progress.Stop()
+			progress = nil
+		}
+	}
+	start = func() {
+		if !ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
+			return
+		}
+		progress = ui.NewProgress(ui.ProgressOptions{
+			Root:    path,
+			Model:   opts.model,
+			NoColor: opts.noColor,
+		})
+		progress.Arm()
+	}
+	attach = func(walkFiles []string, countOpts *tokenizer.CountFilesOptions) {
+		if progress == nil || countOpts == nil {
+			return
+		}
+		// Ends discovery immediately so the UI does not claim scanning after the walk.
+		progress.SetFilesTotal(len(walkFiles))
+		countOpts.OnProgress = progress.OnProgress
+	}
+	return start, stop, attach
 }
 
 func validateCacheFlags(opts *countOptions) error {
