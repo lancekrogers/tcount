@@ -2,15 +2,11 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
@@ -18,15 +14,7 @@ import (
 	"github.com/lancekrogers/tcount/internal/errors"
 	"github.com/lancekrogers/tcount/internal/ui"
 	"github.com/lancekrogers/tcount/tokenizer"
-	"github.com/lancekrogers/tcount/tokenizer/fileops"
 )
-
-// stdinMarker is the conventional path that means "read standard input".
-// Used when the user passes "-" or omits the path argument entirely.
-const stdinMarker = "-"
-
-// stdinReader is the source for filter-mode input. Tests may replace it.
-var stdinReader io.Reader = os.Stdin
 
 type countOptions struct {
 	model         string
@@ -165,36 +153,6 @@ Download vocab files from HuggingFace (see error messages for URLs)`)
 	cmd.Flags().Float64Var(&opts.wordsPerToken, "words-per-token", tokenizer.DefaultWordsPerToken, "words per token ratio")
 }
 
-// isValidModel checks if a model name is valid using the tokenizer registry.
-func isValidModel(model string) bool {
-	return model == "" || slices.Contains(tokenizer.ListModels(), model)
-}
-
-// sentencePieceVocabURLs maps model prefixes to their HuggingFace vocab download URLs.
-var sentencePieceVocabURLs = map[string]string{
-	"llama-3.1": "https://huggingface.co/meta-llama/Llama-3.1-8B/blob/main/original/tokenizer.model",
-	"llama-4":   "https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E/blob/main/tokenizer.model",
-}
-
-// isValidProvider checks if a provider name is valid.
-func isValidProvider(provider string) bool {
-	return slices.Contains(validProviders, provider)
-}
-
-// requiresSentencePiece checks if a model can use SentencePiece tokenization
-// and returns the download URL for the vocab file.
-func requiresSentencePiece(model string) (bool, string) {
-	for prefix, url := range sentencePieceVocabURLs {
-		if strings.HasPrefix(model, prefix) {
-			return true, url
-		}
-	}
-	return false, ""
-}
-
-// validProviders lists accepted values for the --provider flag.
-var validProviders = []string{"openai", "anthropic", "google", "meta", "deepseek", "alibaba", "microsoft", "all"}
-
 func runCount(ctx context.Context, path string, opts *countOptions) error {
 	display := ui.New(opts.noColor, opts.verbose)
 	if opts.verbose {
@@ -242,50 +200,9 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		return errors.Wrap(err, "creating token counter")
 	}
 
-	var result *tokenizer.CountResult
-	if isDirectory {
-		countOpts := tokenizer.CountFilesOptions{
-			Model: opts.model,
-			All:   opts.all,
-		}
-		var progress *ui.Progress
-		if ui.ShouldShowProgress(true, opts.jsonOutput || opts.tokensOnly, opts.noProgress, os.Stderr) {
-			progress = ui.NewProgress(ui.ProgressOptions{
-				Root:       path,
-				FilesTotal: len(walkFiles),
-				Model:      opts.model,
-				NoColor:    opts.noColor,
-			})
-			progress.Arm()
-			countOpts.OnProgress = progress.OnProgress
-		}
-		// Stop and clear the progress frame before any final stdout report.
-		stopProgress := func() {
-			if progress != nil {
-				progress.Stop()
-				progress = nil
-			}
-		}
-		if opts.cache {
-			store, storeErr := newCacheStore()
-			if storeErr != nil {
-				stopProgress()
-				return errors.Wrap(storeErr, "creating cache store")
-			}
-			mode := cache.Metadata
-			if opts.cacheVerify {
-				mode = cache.Verified
-			}
-			result, err = counter.CountFilesWithCacheOptions(ctx, path, walkFiles, countOpts, store, mode)
-		} else {
-			result, err = counter.CountFilesWithOptions(ctx, walkFiles, countOpts)
-		}
-		stopProgress()
-	} else {
-		result, err = counter.Count(ctx, string(content), opts.model, opts.all)
-	}
+	result, err := countResult(ctx, counter, path, content, walkFiles, isDirectory, opts)
 	if err != nil {
-		return errors.Wrap(err, "counting tokens")
+		return err
 	}
 
 	result.FilePath = path
@@ -306,463 +223,67 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	return outputTable(result, opts.showModels)
 }
 
-func validateOutputFlags(opts *countOptions) error {
-	if opts.tokensOnly && opts.jsonOutput {
-		return errors.Validation("--tokens and --json cannot be used together")
-	}
-	if opts.tokensOnly && opts.showModels {
-		return errors.Validation("--tokens and --models cannot be used together")
-	}
-	return nil
-}
-
-func validateCacheFlags(opts *countOptions) error {
-	if opts.cache && opts.noCache {
-		return errors.Validation("--cache and --no-cache cannot be used together")
-	}
-	if opts.cacheVerify && !opts.cache {
-		return errors.Validation("--cache-verify requires --cache")
-	}
-	return nil
-}
-
-func validateCacheTarget(opts *countOptions, isDirectory bool) error {
-	if opts.cache && !isDirectory {
-		return errors.Validation("--cache is only supported for recursive directory counts")
-	}
-	return nil
-}
-
-// validateStdinFlags rejects directory/cache flags that cannot apply to a stream.
-func validateStdinFlags(path string, opts *countOptions) error {
-	if !isStdinSource(path) {
-		return nil
-	}
-	if opts.recursive {
-		return errors.Validation("--recursive requires a directory path; stdin is not a directory")
-	}
-	if opts.cache || opts.cacheVerify {
-		return errors.Validation("--cache is only supported for recursive directory counts")
-	}
-	return nil
-}
-
-// isStdinSource reports whether path means standard input.
-func isStdinSource(path string) bool {
-	return path == stdinMarker
-}
-
-const cacheDirEnvironment = "TCOUNT_CACHE_DIR"
-
-func newCacheStore() (*cache.FileStore, error) {
-	baseDir := os.Getenv(cacheDirEnvironment)
-	if baseDir != "" {
-		info, err := os.Stat(baseDir)
-		if err == nil && !info.IsDir() {
-			return nil, fmt.Errorf("%s must name a directory: %s", cacheDirEnvironment, baseDir)
-		}
-		if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("checking %s=%q: %w", cacheDirEnvironment, baseDir, err)
-		}
-		resolver, err := cache.NewLocationResolverAt(baseDir)
+func countResult(
+	ctx context.Context,
+	counter *tokenizer.Counter,
+	path string,
+	content []byte,
+	walkFiles []string,
+	isDirectory bool,
+	opts *countOptions,
+) (*tokenizer.CountResult, error) {
+	if !isDirectory {
+		result, err := counter.Count(ctx, string(content), opts.model, opts.all)
 		if err != nil {
-			return nil, fmt.Errorf("using %s=%q: %w", cacheDirEnvironment, baseDir, err)
+			return nil, errors.Wrap(err, "counting tokens")
 		}
-		return cache.NewFileStore(resolver), nil
+		return result, nil
 	}
 
-	store, err := cache.NewDefaultFileStore()
-	if err != nil {
-		return nil, err
+	countOpts := tokenizer.CountFilesOptions{
+		Model: opts.model,
+		All:   opts.all,
 	}
-	return store, nil
-}
-
-// resolveInput loads content from stdin, a single file, or walks a directory.
-func resolveInput(ctx context.Context, path string, opts *countOptions, display *ui.UI) (content []byte, walkFiles []string, isDirectory bool, err error) {
-	if isStdinSource(path) {
-		content, err = readStdin(ctx)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		return content, nil, false, nil
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, nil, false, errors.IO("accessing path", err).WithField("path", path)
-	}
-
-	if !info.IsDir() {
-		content, err = os.ReadFile(path)
-		if err != nil {
-			return nil, nil, false, errors.IO("reading file", err).WithField("path", path)
-		}
-		return content, nil, false, nil
-	}
-
-	if !opts.recursive {
-		return nil, nil, true, errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
-	}
-
-	var walkResult *fileops.WalkResult
-	if opts.stats != nil {
-		walkResult, err = fileops.WalkDirectory(ctx, path, opts.stats)
-	} else {
-		walkResult, err = fileops.WalkDirectory(ctx, path)
-	}
-	if err != nil {
-		return nil, nil, true, errors.IO("walking directory", err).WithField("path", path)
-	}
-
-	if len(walkResult.Files) == 0 {
-		return nil, nil, true, errors.NotFound("text files in directory").WithField("path", path)
-	}
-
-	return nil, walkResult.Files, true, nil
-}
-
-// readStdin consumes standard input (or the test-injected stdinReader) until EOF.
-func readStdin(ctx context.Context) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	content, err := io.ReadAll(stdinReader)
-	if err != nil {
-		return nil, errors.IO("reading stdin", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return content, nil
-}
-
-func cacheDiagnosticsMode(opts *countOptions) string {
-	if !opts.cache {
-		return "disabled"
-	}
-	if opts.cacheVerify {
-		return cache.Verified.String()
-	}
-	return cache.Metadata.String()
-}
-
-func outputStats(display *ui.UI, stats tokenizer.StatsSnapshot, validationMode string) {
-	display.Diagnostic("Cache diagnostics: mode=%s files=%d hits=%d partial_hits=%d misses=%d incompatibilities=%d methods_avoided=%d reused_bytes=%d read_bytes=%d tokenizer_calls=%d warnings=%d stages=walk:%s,validation_read:%s,tokenization:%s,aggregation:%s,persistence:%s reasons=%s",
-		validationMode,
-		stats.EligibleFiles,
-		stats.CacheHits,
-		stats.CachePartialHits,
-		stats.CacheMisses,
-		cacheIncompatibilities(stats.CacheReasons),
-		stats.CacheMethodsAvoided,
-		stats.CacheBytesReused,
-		stats.FullFileBytes,
-		tokenizerCalls(stats.FilesTokenizedByMethod),
-		stats.CacheWarnings,
-		stats.WalkDuration,
-		stats.ValidationReadDuration,
-		stats.TokenizationDuration,
-		stats.AggregationDuration,
-		stats.PersistenceReadyDuration,
-		formatCacheReasons(stats.CacheReasons),
-	)
-}
-
-func tokenizerCalls(byMethod map[string]int64) int64 {
-	var calls int64
-	for _, count := range byMethod {
-		calls += count
-	}
-	return calls
-}
-
-func cacheIncompatibilities(reasons map[string]int64) int64 {
-	var total int64
-	for reason, count := range reasons {
-		switch cache.InvalidationReason(reason) {
-		case cache.ReasonSchemaMismatch,
-			cache.ReasonRootMismatch,
-			cache.ReasonPathChanged,
-			cache.ReasonSizeChanged,
-			cache.ReasonModTimeChanged,
-			cache.ReasonContentChanged,
-			cache.ReasonClassificationChanged,
-			cache.ReasonContractMissing:
-			total += count
-		}
-	}
-	return total
-}
-
-func formatCacheReasons(reasons map[string]int64) string {
-	keys := make([]string, 0, len(reasons))
-	for reason, count := range reasons {
-		if count > 0 {
-			keys = append(keys, reason)
-		}
-	}
-	if len(keys) == 0 {
-		return "none"
-	}
-	slices.Sort(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%d", key, reasons[key]))
-	}
-	return strings.Join(parts, ",")
-}
-
-// sentencePieceGuard rejects models that require a SentencePiece vocab file
-// when --vocab-file was not provided.
-func sentencePieceGuard(opts *countOptions) error {
-	needsSP, downloadURL := requiresSentencePiece(opts.model)
-	if !needsSP || opts.vocabFile != "" {
-		return nil
-	}
-
-	return errors.Validation(fmt.Sprintf(
-		"model %s requires a SentencePiece vocab file\n\n"+
-			"Download the tokenizer.model file from:\n"+
-			"  %s\n\n"+
-			"Then run:\n"+
-			"  tcount --model %s --vocab-file /path/to/tokenizer.model <input>",
-		opts.model, downloadURL, opts.model,
-	)).WithField("model", opts.model)
-}
-
-func outputJSON(result *tokenizer.CountResult) error {
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(result)
-}
-
-// outputTokensOnly prints a single integer token count for filter/pipeline use.
-// Prefers the first exact method, then falls back to the first method overall.
-func outputTokensOnly(result *tokenizer.CountResult) error {
-	tokens, err := primaryTokenCount(result)
-	if err != nil {
-		return err
-	}
-	fmt.Println(tokens)
-	return nil
-}
-
-// primaryTokenCount selects the method used by --tokens: first exact method,
-// otherwise the first listed method.
-func primaryTokenCount(result *tokenizer.CountResult) (int, error) {
-	if result == nil || len(result.Methods) == 0 {
-		return 0, errors.Validation("no token methods available to report")
-	}
-	for _, method := range result.Methods {
-		if method.IsExact {
-			return method.Tokens, nil
-		}
-	}
-	return result.Methods[0].Tokens, nil
-}
-
-// displayPath returns a human-facing path label. Stdin stays "-" in JSON
-// (FilePath) but renders as "stdin" in the interactive report.
-func displayPath(result *tokenizer.CountResult) string {
-	if isStdinSource(result.FilePath) {
-		return "stdin"
-	}
-	path := result.FilePath
-	if result.IsDirectory {
-		path += " (directory)"
-	}
-	return path
-}
-
-// styles returns lipgloss styles for output rendering.
-func styles() (title, section, label, valStyle lipgloss.Style) {
-	purple := lipgloss.Color("99")
-	dim := lipgloss.Color("245")
-
-	title = lipgloss.NewStyle().Bold(true).Foreground(purple)
-	section = lipgloss.NewStyle().Bold(true).Foreground(purple)
-	label = lipgloss.NewStyle().Foreground(dim)
-	valStyle = lipgloss.NewStyle()
-	return
-}
-
-func outputTable(result *tokenizer.CountResult, showModels bool) error {
-	_, sectionStyle, labelStyle, _ := styles()
-
-	printReportHeader(result)
-
-	rows, showContext := methodRows(result)
-	fmt.Println(sectionStyle.Render("Token Counts by Method"))
-	fmt.Println(renderMethodTable(rows, showContext))
-
-	if showModels {
-		fmt.Println()
-		outputModelLookup(sectionStyle, labelStyle)
-	}
-
-	return nil
-}
-
-// printReportHeader prints the report title and the basic statistics block.
-func printReportHeader(result *tokenizer.CountResult) {
-	titleStyle, sectionStyle, labelStyle, valStyle := styles()
-
-	fmt.Println(titleStyle.Render("Token Count Report for: " + displayPath(result)))
-	fmt.Println()
-
-	fmt.Println(sectionStyle.Render("Basic Statistics"))
-	if result.IsDirectory {
-		fmt.Printf("  %s %s\n", labelStyle.Render("Files:"), valStyle.Render(formatInt(result.FileCount)))
-	}
-	fmt.Printf("  %s %s\n", labelStyle.Render("Characters:"), valStyle.Render(formatInt(result.Characters)))
-	fmt.Printf("  %s %s\n", labelStyle.Render("Words:"), valStyle.Render(formatInt(result.Words)))
-	fmt.Printf("  %s %s\n", labelStyle.Render("Lines:"), valStyle.Render(formatInt(result.Lines)))
-	fmt.Println()
-}
-
-// methodRows builds the token table rows. The second return reports whether
-// any method carries a context window, which adds the Context Usage column.
-func methodRows(result *tokenizer.CountResult) ([][]string, bool) {
-	showContext := false
-	for _, method := range result.Methods {
-		if method.ContextWindow > 0 {
-			showContext = true
-			break
-		}
-	}
-
-	rows := make([][]string, 0, len(result.Methods))
-	for _, method := range result.Methods {
-		accuracy := "Approx"
-		if method.IsExact {
-			accuracy = "Exact"
-		} else if method.Name == tokenizer.NameClaudeApprox {
-			accuracy = "Estimated"
-		}
-		row := []string{method.DisplayName, formatInt(method.Tokens), accuracy}
-		if showContext {
-			row = append(row, formatContextUsage(method.Tokens, method.ContextWindow))
-		}
-		rows = append(rows, row)
-	}
-
-	return rows, showContext
-}
-
-// renderMethodTable renders the styled token table.
-func renderMethodTable(rows [][]string, showContext bool) *table.Table {
-	purple := lipgloss.Color("99")
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(purple).Align(lipgloss.Center)
-	cellStyle := lipgloss.NewStyle().PaddingLeft(1).PaddingRight(1)
-	tokenCellStyle := cellStyle.Align(lipgloss.Right)
-
-	headers := []string{"Method", "Tokens", "Accuracy"}
-	if showContext {
-		headers = append(headers, "Context Usage")
-	}
-
-	return table.New().
-		Border(lipgloss.RoundedBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(purple)).
-		Headers(headers...).
-		Rows(rows...).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return headerStyle
-			}
-			// Tokens column: right-aligned
-			if col == 1 {
-				return tokenCellStyle
-			}
-			// Accuracy column: color-coded
-			if col == 2 && row >= 0 && row < len(rows) {
-				switch rows[row][2] {
-				case "Exact":
-					return cellStyle.Foreground(lipgloss.Color("10"))
-				case "Estimated":
-					return cellStyle.Foreground(lipgloss.Color("11"))
-				default:
-					return cellStyle.Foreground(lipgloss.Color("245"))
-				}
-			}
-			return cellStyle
+	var progress *ui.Progress
+	if ui.ShouldShowProgress(true, opts.jsonOutput || opts.tokensOnly, opts.noProgress, os.Stderr) {
+		progress = ui.NewProgress(ui.ProgressOptions{
+			Root:       path,
+			FilesTotal: len(walkFiles),
+			Model:      opts.model,
+			NoColor:    opts.noColor,
 		})
-}
-
-// formatInt formats an integer with comma thousand separators.
-func formatInt(n int) string {
-	if n < 0 {
-		return "-" + formatInt(-n)
+		progress.Arm()
+		countOpts.OnProgress = progress.OnProgress
 	}
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var b strings.Builder
-	remainder := len(s) % 3
-	if remainder > 0 {
-		b.WriteString(s[:remainder])
-	}
-	for i := remainder; i < len(s); i += 3 {
-		if b.Len() > 0 {
-			b.WriteByte(',')
+	// Stop and clear the progress frame before any final stdout report.
+	stopProgress := func() {
+		if progress != nil {
+			progress.Stop()
+			progress = nil
 		}
-		b.WriteString(s[i : i+3])
 	}
-	return b.String()
-}
 
-// formatContextUsage returns a "<pct> of <window>" string describing how much
-// of a model's context window the token count consumes. Returns empty if the
-// window is unknown.
-func formatContextUsage(tokens, window int) string {
-	if window <= 0 {
-		return ""
-	}
-	pct := float64(tokens) / float64(window) * 100
-	var pctStr string
-	switch {
-	case pct >= 10:
-		pctStr = fmt.Sprintf("%.0f%%", pct)
-	case pct >= 1:
-		pctStr = fmt.Sprintf("%.1f%%", pct)
-	case pct >= 0.1:
-		pctStr = fmt.Sprintf("%.2f%%", pct)
-	default:
-		pctStr = "<0.1%"
-	}
-	return fmt.Sprintf("%s of %s", pctStr, formatWindow(window))
-}
-
-// formatWindow renders a context-window size compactly (e.g. 1M, 400K, 128K).
-func formatWindow(n int) string {
-	switch {
-	case n >= 1_000_000:
-		m := float64(n) / 1_000_000
-		if m == float64(int(m)) {
-			return fmt.Sprintf("%dM", int(m))
+	var (
+		result *tokenizer.CountResult
+		err    error
+	)
+	if opts.cache {
+		store, storeErr := newCacheStore()
+		if storeErr != nil {
+			stopProgress()
+			return nil, errors.Wrap(storeErr, "creating cache store")
 		}
-		return fmt.Sprintf("%.1fM", m)
-	case n >= 1000:
-		return fmt.Sprintf("%dK", n/1000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
-}
-
-// outputModelLookup prints the encoding→model mapping.
-func outputModelLookup(sectionStyle, labelStyle lipgloss.Style) {
-	fmt.Println(sectionStyle.Render("Model Lookup"))
-
-	byEncoding := tokenizer.ModelsByEncoding()
-
-	order := []string{tokenizer.EncodingO200kBase, tokenizer.EncodingCL100kBase, tokenizer.EncodingClaudeApprox, tokenizer.EncodingGeminiApprox}
-	for _, enc := range order {
-		models, ok := byEncoding[enc]
-		if !ok {
-			continue
+		mode := cache.Metadata
+		if opts.cacheVerify {
+			mode = cache.Verified
 		}
-		fmt.Printf("  %s %s\n", labelStyle.Render(enc+":"), strings.Join(models, ", "))
+		result, err = counter.CountFilesWithCacheOptions(ctx, path, walkFiles, countOpts, store, mode)
+	} else {
+		result, err = counter.CountFilesWithOptions(ctx, walkFiles, countOpts)
 	}
+	stopProgress()
+	if err != nil {
+		return nil, errors.Wrap(err, "counting tokens")
+	}
+	return result, nil
 }
