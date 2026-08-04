@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/lancekrogers/tcount/tokenizer"
@@ -45,11 +46,23 @@ func TestMain(m *testing.M) {
 // stdout, stderr, and exit code.
 func runTcount(t *testing.T, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
+	return runTcountWithStdin(t, "", args...)
+}
+
+// runTcountWithStdin executes tcount with optional stdin content.
+// When stdin is empty, the process gets a closed stdin (not a TTY hang).
+func runTcountWithStdin(t *testing.T, stdin string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
 
 	cmd := exec.Command(binaryPath, args...)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	} else {
+		cmd.Stdin = bytes.NewReader(nil)
+	}
 
 	err := cmd.Run()
 	exitCode = 0

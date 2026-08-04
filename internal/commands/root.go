@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -20,12 +21,20 @@ import (
 	"github.com/lancekrogers/tcount/tokenizer/fileops"
 )
 
+// stdinMarker is the conventional path that means "read standard input".
+// Used when the user passes "-" or omits the path argument entirely.
+const stdinMarker = "-"
+
+// stdinReader is the source for filter-mode input. Tests may replace it.
+var stdinReader io.Reader = os.Stdin
+
 type countOptions struct {
 	model         string
 	vocabFile     string
 	provider      string
 	all           bool
 	jsonOutput    bool
+	tokensOnly    bool
 	showModels    bool
 	recursive     bool
 	cache         bool
@@ -51,10 +60,10 @@ func newRootCmd(version string) *cobra.Command {
 	opts := &countOptions{}
 
 	cmd := &cobra.Command{
-		Use:     "tcount [file|directory]",
+		Use:     "tcount [file|directory|-]",
 		Version: version,
 		Short:   "Count tokens in files using various LLM tokenizers",
-		Long: `Count tokens in a file or directory using multiple tokenization methods.
+		Long: `Count tokens in a file, directory, or stdin using multiple tokenization methods.
 
 Provides token counts using different LLM tokenizers and approximation methods,
 helping you understand how much of a model's context window your text uses.
@@ -62,6 +71,10 @@ helping you understand how much of a model's context window your text uses.
 Supports all modern OpenAI models (GPT-5.x, GPT-4.1, GPT-4o, o-series),
 Anthropic Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5, and earlier), and
 Google Gemini models.
+
+When no path is given, or when the path is "-", tcount reads standard input
+like a Unix filter (wc, cat). Use --tokens to print only the token count for
+scripting pipelines.
 
 When counting a directory with --recursive, the command:
   - Respects .gitignore files
@@ -77,18 +90,24 @@ When counting a directory with --recursive, the command:
   tcount --model llama-3.1-8b --vocab-file tokenizer.model doc.md  # SentencePiece
   tcount --all doc.md                                      # Show all counting methods
   tcount --json doc.md                                     # Output as JSON
+  cat prompt.md | tcount --model gpt-4o --tokens           # Unix filter: number only
+  tcount - --model gpt-4o --json < prompt.md               # Explicit stdin + JSON
   tcount -r ./src                                          # Count all files in directory
   tcount -d --cache ./src                                  # Opt into experimental directory caching
   TCOUNT_CACHE_DIR=/tmp/tcount-cache tcount -d --cache ./src
   tcount -r --models ./project                             # Show encoding→model lookup`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if opts.noColor {
 				lipgloss.SetColorProfile(termenv.Ascii)
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCount(cmd.Context(), args[0], opts)
+			path := stdinMarker
+			if len(args) == 1 {
+				path = args[0]
+			}
+			return runCount(cmd.Context(), path, opts)
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -134,6 +153,7 @@ Download vocab files from HuggingFace (see error messages for URLs)`)
 	cmd.Flags().StringVar(&opts.provider, "provider", "all", `filter models by provider (openai, anthropic, google, meta, deepseek, alibaba, microsoft, all)`)
 	cmd.Flags().BoolVar(&opts.all, "all", false, "show all counting methods")
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "output in JSON format")
+	cmd.Flags().BoolVar(&opts.tokensOnly, "tokens", false, "print only the token count (scripting / filter mode)")
 	cmd.Flags().BoolVarP(&opts.showModels, "models", "m", false, "show encoding-to-model lookup table")
 	cmd.Flags().BoolVarP(&opts.recursive, "recursive", "r", false, "recursively count tokens in directory")
 	cmd.Flags().BoolVarP(&opts.recursive, "directory", "d", false, "alias for --recursive")
@@ -180,7 +200,13 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	if opts.verbose {
 		opts.stats = tokenizer.NewStats()
 	}
+	if err := validateOutputFlags(opts); err != nil {
+		return err
+	}
 	if err := validateCacheFlags(opts); err != nil {
+		return err
+	}
+	if err := validateStdinFlags(path, opts); err != nil {
 		return err
 	}
 
@@ -223,7 +249,7 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 			All:   opts.all,
 		}
 		var progress *ui.Progress
-		if ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
+		if ui.ShouldShowProgress(true, opts.jsonOutput || opts.tokensOnly, opts.noProgress, os.Stderr) {
 			progress = ui.NewProgress(ui.ProgressOptions{
 				Root:       path,
 				FilesTotal: len(walkFiles),
@@ -273,8 +299,21 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 	if opts.jsonOutput {
 		return outputJSON(result)
 	}
+	if opts.tokensOnly {
+		return outputTokensOnly(result)
+	}
 
 	return outputTable(result, opts.showModels)
+}
+
+func validateOutputFlags(opts *countOptions) error {
+	if opts.tokensOnly && opts.jsonOutput {
+		return errors.Validation("--tokens and --json cannot be used together")
+	}
+	if opts.tokensOnly && opts.showModels {
+		return errors.Validation("--tokens and --models cannot be used together")
+	}
+	return nil
 }
 
 func validateCacheFlags(opts *countOptions) error {
@@ -292,6 +331,25 @@ func validateCacheTarget(opts *countOptions, isDirectory bool) error {
 		return errors.Validation("--cache is only supported for recursive directory counts")
 	}
 	return nil
+}
+
+// validateStdinFlags rejects directory/cache flags that cannot apply to a stream.
+func validateStdinFlags(path string, opts *countOptions) error {
+	if !isStdinSource(path) {
+		return nil
+	}
+	if opts.recursive {
+		return errors.Validation("--recursive requires a directory path; stdin is not a directory")
+	}
+	if opts.cache || opts.cacheVerify {
+		return errors.Validation("--cache is only supported for recursive directory counts")
+	}
+	return nil
+}
+
+// isStdinSource reports whether path means standard input.
+func isStdinSource(path string) bool {
+	return path == stdinMarker
 }
 
 const cacheDirEnvironment = "TCOUNT_CACHE_DIR"
@@ -320,9 +378,16 @@ func newCacheStore() (*cache.FileStore, error) {
 	return store, nil
 }
 
-// resolveInput stats the path and loads the single file's content or walks
-// the directory for its file list.
+// resolveInput loads content from stdin, a single file, or walks a directory.
 func resolveInput(ctx context.Context, path string, opts *countOptions, display *ui.UI) (content []byte, walkFiles []string, isDirectory bool, err error) {
+	if isStdinSource(path) {
+		content, err = readStdin(ctx)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		return content, nil, false, nil
+	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, nil, false, errors.IO("accessing path", err).WithField("path", path)
@@ -355,6 +420,21 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, display 
 	}
 
 	return nil, walkResult.Files, true, nil
+}
+
+// readStdin consumes standard input (or the test-injected stdinReader) until EOF.
+func readStdin(ctx context.Context) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	content, err := io.ReadAll(stdinReader)
+	if err != nil {
+		return nil, errors.IO("reading stdin", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return content, nil
 }
 
 func cacheDiagnosticsMode(opts *countOptions) string {
@@ -457,6 +537,44 @@ func outputJSON(result *tokenizer.CountResult) error {
 	return encoder.Encode(result)
 }
 
+// outputTokensOnly prints a single integer token count for filter/pipeline use.
+// Prefers the first exact method, then falls back to the first method overall.
+func outputTokensOnly(result *tokenizer.CountResult) error {
+	tokens, err := primaryTokenCount(result)
+	if err != nil {
+		return err
+	}
+	fmt.Println(tokens)
+	return nil
+}
+
+// primaryTokenCount selects the method used by --tokens: first exact method,
+// otherwise the first listed method.
+func primaryTokenCount(result *tokenizer.CountResult) (int, error) {
+	if result == nil || len(result.Methods) == 0 {
+		return 0, errors.Validation("no token methods available to report")
+	}
+	for _, method := range result.Methods {
+		if method.IsExact {
+			return method.Tokens, nil
+		}
+	}
+	return result.Methods[0].Tokens, nil
+}
+
+// displayPath returns a human-facing path label. Stdin stays "-" in JSON
+// (FilePath) but renders as "stdin" in the interactive report.
+func displayPath(result *tokenizer.CountResult) string {
+	if isStdinSource(result.FilePath) {
+		return "stdin"
+	}
+	path := result.FilePath
+	if result.IsDirectory {
+		path += " (directory)"
+	}
+	return path
+}
+
 // styles returns lipgloss styles for output rendering.
 func styles() (title, section, label, valStyle lipgloss.Style) {
 	purple := lipgloss.Color("99")
@@ -490,11 +608,7 @@ func outputTable(result *tokenizer.CountResult, showModels bool) error {
 func printReportHeader(result *tokenizer.CountResult) {
 	titleStyle, sectionStyle, labelStyle, valStyle := styles()
 
-	path := result.FilePath
-	if result.IsDirectory {
-		path += " (directory)"
-	}
-	fmt.Println(titleStyle.Render("Token Count Report for: " + path))
+	fmt.Println(titleStyle.Render("Token Count Report for: " + displayPath(result)))
 	fmt.Println()
 
 	fmt.Println(sectionStyle.Render("Basic Statistics"))
