@@ -14,8 +14,10 @@ import (
 // Used when the user passes "-" or omits the path argument entirely.
 const stdinMarker = "-"
 
-// stdinReader is the source for filter-mode input. Tests may replace it.
-var stdinReader io.Reader = os.Stdin
+// stdinReader is the source for filter-mode input. It must be closable so
+// context cancellation can interrupt a blocked pipe or FIFO read. Tests may
+// replace it with another io.ReadCloser.
+var stdinReader io.ReadCloser = os.Stdin
 
 // isStdinSource reports whether path means standard input.
 func isStdinSource(path string) bool {
@@ -80,17 +82,24 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, _ *ui.UI
 	return nil, walkResult.Files, true, nil
 }
 
-// readStdin consumes standard input (or the test-injected stdinReader) until EOF.
+// readStdin consumes standard input (or the test-injected stdinReader) until
+// EOF. Cancellation closes the stream so a blocked Read wakes up promptly.
 func readStdin(ctx context.Context) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	content, err := io.ReadAll(stdinReader)
+	reader := stdinReader
+	stopClose := context.AfterFunc(ctx, func() {
+		_ = reader.Close()
+	})
+	defer stopClose()
+
+	content, err := io.ReadAll(reader)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err != nil {
 		return nil, errors.IO("reading stdin", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
 	}
 	return content, nil
 }

@@ -46,6 +46,9 @@ func validateOutputFlags(opts *countOptions) error {
 	if opts.tokensOnly && opts.showModels {
 		return errors.Validation("--tokens and --models cannot be used together")
 	}
+	if opts.tokensOnly && opts.all {
+		return errors.Validation("--tokens and --all cannot be used together; select one model with --model")
+	}
 	return nil
 }
 

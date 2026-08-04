@@ -326,7 +326,7 @@ tcount - --model gpt-4o --json < prompt.md
 
 JSON for stdin uses `"file_path": "-"`. The interactive report labels the source as `stdin`. `--recursive` / `--cache` require a directory path and are rejected with stdin.
 
-`--tokens` prints one integer followed by a newline: the first exact method when present (or the method for `--model`), otherwise the first listed approximation. It is mutually exclusive with `--json` and `--models`.
+`--tokens` prints one integer followed by a newline: the first exact method when present (or the method for `--model`), otherwise the first listed approximation. It is mutually exclusive with `--json`, `--models`, and `--all`.
 
 ### JSON output
 

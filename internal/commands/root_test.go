@@ -270,6 +270,9 @@ func TestValidateOutputFlags(t *testing.T) {
 	if err := validateOutputFlags(&countOptions{tokensOnly: true, showModels: true}); err == nil || !strings.Contains(err.Error(), "--models") {
 		t.Fatalf("tokens+models error = %v", err)
 	}
+	if err := validateOutputFlags(&countOptions{tokensOnly: true, all: true}); err == nil || !strings.Contains(err.Error(), "--all") {
+		t.Fatalf("tokens+all error = %v", err)
+	}
 	if err := validateOutputFlags(&countOptions{tokensOnly: true}); err != nil {
 		t.Fatalf("tokens-only error = %v", err)
 	}

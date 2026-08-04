@@ -183,6 +183,12 @@ func TestIntegrationCLI_ErrorCases(t *testing.T) {
 			expectExitCode: 1,
 			expectStderr:   "--json",
 		},
+		{
+			name:           "tokens with all methods",
+			args:           []string{"--tokens", "--all", "--model", "gpt-4o", fixturesDir(t) + "/unicode.txt"},
+			expectExitCode: 1,
+			expectStderr:   "--all",
+		},
 	}
 
 	for _, tc := range tests {
