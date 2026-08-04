@@ -193,7 +193,27 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		display.Warning("Unknown model '%s', using approximation methods", opts.model)
 	}
 
-	content, walkFiles, isDirectory, err := resolveInput(ctx, path, opts, display)
+	var progress *ui.Progress
+	startDirectoryProgress := func() {
+		if !ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
+			return
+		}
+		progress = ui.NewProgress(ui.ProgressOptions{
+			Root:    path,
+			Model:   opts.model,
+			NoColor: opts.noColor,
+		})
+		progress.Arm()
+	}
+	stopProgress := func() {
+		if progress != nil {
+			progress.Stop()
+			progress = nil
+		}
+	}
+	defer stopProgress()
+
+	content, walkFiles, isDirectory, err := resolveInput(ctx, path, opts, display, startDirectoryProgress)
 	if err != nil {
 		return err
 	}
@@ -222,23 +242,9 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 			Model: opts.model,
 			All:   opts.all,
 		}
-		var progress *ui.Progress
-		if ui.ShouldShowProgress(true, opts.jsonOutput, opts.noProgress, os.Stderr) {
-			progress = ui.NewProgress(ui.ProgressOptions{
-				Root:       path,
-				FilesTotal: len(walkFiles),
-				Model:      opts.model,
-				NoColor:    opts.noColor,
-			})
-			progress.Arm()
+		if progress != nil {
+			progress.SetFilesTotal(len(walkFiles))
 			countOpts.OnProgress = progress.OnProgress
-		}
-		// Stop and clear the progress frame before any final stdout report.
-		stopProgress := func() {
-			if progress != nil {
-				progress.Stop()
-				progress = nil
-			}
 		}
 		if opts.cache {
 			store, storeErr := newCacheStore()
@@ -322,7 +328,7 @@ func newCacheStore() (*cache.FileStore, error) {
 
 // resolveInput stats the path and loads the single file's content or walks
 // the directory for its file list.
-func resolveInput(ctx context.Context, path string, opts *countOptions, display *ui.UI) (content []byte, walkFiles []string, isDirectory bool, err error) {
+func resolveInput(ctx context.Context, path string, opts *countOptions, display *ui.UI, onDirectoryWalkStart func()) (content []byte, walkFiles []string, isDirectory bool, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, nil, false, errors.IO("accessing path", err).WithField("path", path)
@@ -338,6 +344,9 @@ func resolveInput(ctx context.Context, path string, opts *countOptions, display 
 
 	if !opts.recursive {
 		return nil, nil, true, errors.Validation("path is a directory — use --recursive flag to count tokens in all files").WithField("path", path)
+	}
+	if onDirectoryWalkStart != nil {
+		onDirectoryWalkStart()
 	}
 
 	var walkResult *fileops.WalkResult
