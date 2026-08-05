@@ -208,6 +208,13 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		return err
 	}
 
+	// Clear the live progress frame before any final report. Progress paints
+	// on stderr with in-place ANSI rewrites; stdout/stderr share the TTY
+	// cursor. If Stop runs after outputTable (via defer only), clear moves up
+	// into the report, clips the table bottom border, and leaves the counting
+	// frame in scrollback above the results.
+	stopProgress()
+
 	result.FilePath = path
 	result.IsDirectory = isDirectory
 	if !isDirectory {
@@ -279,6 +286,10 @@ func countResult(
 // start is invoked once resolveInput confirms a recursive walk; attach ends
 // discovery with the walked file total and wires OnProgress; stop clears any
 // painted frame (safe to call more than once).
+//
+// Callers must invoke stop after counting finishes and before writing the final
+// report/JSON/tokens output. Defer alone is not enough: Stop uses cursor-up
+// clears on the shared TTY and will clip the report if it runs afterward.
 func armDirectoryProgress(path string, opts *countOptions) (start, stop func(), attach func([]string, *tokenizer.CountFilesOptions)) {
 	var progress *ui.Progress
 	stop = func() {
