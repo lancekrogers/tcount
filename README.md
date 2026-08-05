@@ -26,7 +26,8 @@ A fast token counter for LLM workflows that runs entirely on your machine: no AP
 - **Context window usage** — see what percentage of a model's context you're consuming (shown when you pass `--model`)
 - **Provider filtering** — compare models from a specific provider
 - **Directory scanning** — `.gitignore`-aware, skips binaries, counts files in parallel with memory bounded by your largest file
-- **Live counting progress** — on a TTY, recursive counts show a spinner and rising file/char totals while work runs (disable with `--no-progress`; never shown for `--json`)
+- **Live counting progress** — on a TTY, recursive counts show a spinner and rising file/char totals while work runs (disable with `--no-progress`; never shown for `--json` or `--tokens`)
+- **Unix filter mode** — read stdin when no path is given or when the path is `-`; pair with `--tokens` for a single integer on stdout
 - **JSON output** for scripting and pipelines
 - **Experimental directory cache** — opt-in reuse for repeated recursive counts, with status, clear, verification, and bypass controls
 
@@ -91,6 +92,12 @@ tcount -d --no-progress ./src
 
 # JSON output for scripting
 tcount --json document.md
+
+# Unix filter: count tokens from a pipe
+cat prompt.md | tcount --model gpt-4o --tokens
+
+# Same with explicit stdin marker
+tcount - --model gpt-4o --json < prompt.md
 
 # Opt-in cache for repeated directory counts
 tcount -d --cache ./src
@@ -177,8 +184,10 @@ Gemini uses its own SentencePiece tokenizer. Without a `--vocab-file`, tcount ap
 ## Usage
 
 ```
-tcount [file|directory] [flags]
+tcount [file|directory|-] [flags]
 ```
+
+Omit the path (or pass `-`) to read standard input like `wc`.
 
 ### Flags
 
@@ -190,6 +199,7 @@ tcount [file|directory] [flags]
 | `--vocab-file` | | Path to SentencePiece `.model` file for exact Llama tokenization |
 | `--all` | | Show all counting methods |
 | `--json` | | JSON output |
+| `--tokens` | | Print only the token count (quiet filter mode; first exact method, else first method) |
 | `--recursive` | `-r` | Recursively count files in a directory |
 | `--directory` | `-d` | Alias for `--recursive` |
 | `--cache` | | Enable experimental persistent caching for recursive directory counts |
@@ -298,6 +308,26 @@ format may change before it becomes a default.
 See [the directory-cache operations guide](docs/directory-cache/README.md) for
 the storage, privacy, exactness, and rollout details.
 
+### Unix filter (stdin)
+
+`tcount` behaves as a stream filter when you omit the path or pass `-`:
+
+```bash
+# Quiet integer for scripts and pipelines (prefer --model for a known encoding)
+cat prompt.md | tcount --model gpt-4o --tokens
+# → 1497
+
+# Redirection works the same way
+tcount --model gpt-4o --tokens < prompt.md
+
+# Explicit stdin marker (useful in scripts that always pass a path)
+tcount - --model gpt-4o --json < prompt.md
+```
+
+JSON for stdin uses `"file_path": "-"`. The interactive report labels the source as `stdin`. `--recursive` / `--cache` require a directory path and are rejected with stdin.
+
+`--tokens` prints one integer followed by a newline: the first exact method when present (or the method for `--model`), otherwise the first listed approximation. It is mutually exclusive with `--json`, `--models`, and `--all`.
+
 ### JSON output
 
 ```
@@ -323,6 +353,9 @@ $ tcount --json --model gpt-5 tokenizer.go
 ```bash
 # Extract a specific count
 tcount --json myfile.txt | jq '.methods[] | select(.name == "bpe_gpt_5") | .tokens'
+
+# Or skip jq for a single model
+tcount --model gpt-5 --tokens myfile.txt
 
 # Batch count all markdown files
 for f in docs/*.md; do tcount --json "$f"; done | jq -s '.'

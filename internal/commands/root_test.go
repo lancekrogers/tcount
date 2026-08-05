@@ -149,12 +149,12 @@ func TestNewRootCmd(t *testing.T) {
 		t.Fatal("newRootCmd() returned nil")
 	}
 
-	if cmd.Use != "tcount [file|directory]" {
+	if cmd.Use != "tcount [file|directory|-]" {
 		t.Errorf("Unexpected Use: %s", cmd.Use)
 	}
 
 	// Verify flags exist
-	flags := []string{"model", "vocab-file", "provider", "all", "json", "models", "recursive", "cache", "no-cache", "cache-verify", "no-color", "verbose"}
+	flags := []string{"model", "vocab-file", "provider", "all", "json", "tokens", "models", "recursive", "cache", "no-cache", "cache-verify", "no-color", "verbose"}
 	for _, flag := range flags {
 		if cmd.Flags().Lookup(flag) == nil && cmd.PersistentFlags().Lookup(flag) == nil {
 			t.Errorf("Flag --%s not found", flag)
@@ -199,6 +199,137 @@ func TestValidateCacheTarget(t *testing.T) {
 	}
 	if err := validateCacheTarget(&countOptions{noCache: true}, false); err != nil {
 		t.Fatalf("single-file cold bypass error = %v", err)
+	}
+}
+
+func TestIsStdinSource(t *testing.T) {
+	if !isStdinSource("-") {
+		t.Fatal("expected \"-\" to be stdin")
+	}
+	if isStdinSource("file.txt") {
+		t.Fatal("expected file path not to be stdin")
+	}
+	if isStdinSource("") {
+		t.Fatal("empty path is not the stdin marker after arg normalization")
+	}
+}
+
+func TestValidateStdinFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		opts *countOptions
+		want string
+	}{
+		{
+			name: "stdin with recursive",
+			path: "-",
+			opts: &countOptions{recursive: true},
+			want: "recursive",
+		},
+		{
+			name: "stdin with cache",
+			path: "-",
+			opts: &countOptions{cache: true},
+			want: "cache",
+		},
+		{
+			name: "file allows recursive flag until path resolved",
+			path: "src",
+			opts: &countOptions{recursive: true},
+			want: "",
+		},
+		{
+			name: "stdin plain is fine",
+			path: "-",
+			opts: &countOptions{},
+			want: "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateStdinFlags(test.path, test.opts)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("validateStdinFlags() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validateStdinFlags() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateOutputFlags(t *testing.T) {
+	if err := validateOutputFlags(&countOptions{tokensOnly: true, jsonOutput: true}); err == nil || !strings.Contains(err.Error(), "--json") {
+		t.Fatalf("tokens+json error = %v", err)
+	}
+	if err := validateOutputFlags(&countOptions{tokensOnly: true, showModels: true}); err == nil || !strings.Contains(err.Error(), "--models") {
+		t.Fatalf("tokens+models error = %v", err)
+	}
+	if err := validateOutputFlags(&countOptions{tokensOnly: true, all: true}); err == nil || !strings.Contains(err.Error(), "--all") {
+		t.Fatalf("tokens+all error = %v", err)
+	}
+	if err := validateOutputFlags(&countOptions{tokensOnly: true}); err != nil {
+		t.Fatalf("tokens-only error = %v", err)
+	}
+}
+
+func TestPrimaryTokenCount(t *testing.T) {
+	exactFirst := &tokenizer.CountResult{
+		Methods: []tokenizer.MethodResult{
+			{Name: "approx", Tokens: 10, IsExact: false},
+			{Name: "exact", Tokens: 42, IsExact: true},
+		},
+	}
+	got, err := primaryTokenCount(exactFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 42 {
+		t.Fatalf("primaryTokenCount exact = %d, want 42", got)
+	}
+
+	approxOnly := &tokenizer.CountResult{
+		Methods: []tokenizer.MethodResult{
+			{Name: "approx", Tokens: 7, IsExact: false},
+		},
+	}
+	got, err = primaryTokenCount(approxOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 7 {
+		t.Fatalf("primaryTokenCount approx = %d, want 7", got)
+	}
+
+	if _, err := primaryTokenCount(&tokenizer.CountResult{}); err == nil {
+		t.Fatal("expected error for empty methods")
+	}
+}
+
+func TestDisplayPath(t *testing.T) {
+	if got := displayPath(&tokenizer.CountResult{FilePath: "-"}); got != "stdin" {
+		t.Fatalf("stdin display path = %q, want stdin", got)
+	}
+	if got := displayPath(&tokenizer.CountResult{FilePath: "a.md", IsDirectory: true}); got != "a.md (directory)" {
+		t.Fatalf("directory display path = %q", got)
+	}
+}
+
+func TestRootAcceptsZeroArgs(t *testing.T) {
+	cmd := newRootCmd("test")
+	if err := cmd.Args(cmd, []string{}); err != nil {
+		t.Fatalf("zero args should be allowed for stdin filter mode: %v", err)
+	}
+	if err := cmd.Args(cmd, []string{"file.txt"}); err != nil {
+		t.Fatalf("one arg should be allowed: %v", err)
+	}
+	if err := cmd.Args(cmd, []string{"a", "b"}); err == nil {
+		t.Fatal("two args should be rejected")
 	}
 }
 
