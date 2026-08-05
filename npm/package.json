@@ -1,6 +1,6 @@
 {
   "name": "@obedience-corp/tcount",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Local token counter for LLM workflows: exact OpenAI BPE, Claude and Gemini estimates, context-window usage, zero network (tcount CLI)",
   "repository": {
     "type": "git",
