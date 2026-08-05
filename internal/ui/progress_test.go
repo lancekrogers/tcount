@@ -261,6 +261,87 @@ func TestFormatProgressInt(t *testing.T) {
 	}
 }
 
+// TestProgressStopBeforeReportPreservesTail documents the lifecycle contract for
+// directory counting: progress and the final report share a TTY cursor. Stop
+// must clear the progress frame *before* the report is written; otherwise the
+// ANSI cursor-up/clear sequences erase the bottom of the report (missing table
+// border) while the counting frame remains in scrollback.
+func TestProgressStopBeforeReportPreservesTail(t *testing.T) {
+	t.Parallel()
+
+	const reportTail = "│ Character-based (÷4.0) │ 260,582,882 │ Approx │\n╰───────────────────────┴────────────┴────────╯\n"
+
+	// Wrong order: paint progress, write report, then Stop — clips report tail.
+	var wrong synchronizedBuffer
+	pWrong := NewProgress(ProgressOptions{
+		Out:        &wrong,
+		Root:       ".",
+		FilesTotal: 2,
+		PaintDelay: 5 * time.Millisecond,
+		NoColor:    true,
+	})
+	pWrong.Arm()
+	pWrong.OnProgress(tokenizer.ProgressUpdate{
+		FilesTotal: 2,
+		FilesDone:  2,
+		Characters: 10,
+		Words:      2,
+		Lines:      1,
+		LastPath:   "a.txt",
+	})
+	time.Sleep(40 * time.Millisecond)
+	_, _ = wrong.Write([]byte(reportTail))
+	pWrong.Stop()
+	if strings.Contains(wrong.String(), reportTail) {
+		// Clear rewrites last N lines of the shared stream; the literal tail
+		// bytes may still be in the buffer while the TTY view is clipped. On a
+		// byte buffer the clear sequences are appended after the report, so the
+		// string still contains reportTail — assert that clear still ran after.
+		if !strings.Contains(wrong.String(), "\033[3A") {
+			t.Fatalf("expected post-report clear (wrong order), got %q", wrong.String())
+		}
+		// Ensure clear sequences appear after the report content (the bug).
+		reportIdx := strings.Index(wrong.String(), "Character-based")
+		clearIdx := strings.LastIndex(wrong.String(), "\033[3A")
+		if reportIdx < 0 || clearIdx < reportIdx {
+			t.Fatalf("wrong order should clear after report; reportIdx=%d clearIdx=%d out=%q",
+				reportIdx, clearIdx, wrong.String())
+		}
+	}
+
+	// Correct order: Stop, then write report — clear precedes report; tail intact.
+	var right synchronizedBuffer
+	pRight := NewProgress(ProgressOptions{
+		Out:        &right,
+		Root:       ".",
+		FilesTotal: 2,
+		PaintDelay: 5 * time.Millisecond,
+		NoColor:    true,
+	})
+	pRight.Arm()
+	pRight.OnProgress(tokenizer.ProgressUpdate{
+		FilesTotal: 2,
+		FilesDone:  2,
+		Characters: 10,
+		Words:      2,
+		Lines:      1,
+		LastPath:   "a.txt",
+	})
+	time.Sleep(40 * time.Millisecond)
+	pRight.Stop()
+	_, _ = right.Write([]byte(reportTail))
+	out := right.String()
+	if !strings.Contains(out, reportTail) {
+		t.Fatalf("correct order must leave report tail intact, got %q", out)
+	}
+	reportIdx := strings.Index(out, "Character-based")
+	clearIdx := strings.LastIndex(out, "\033[3A")
+	if clearIdx < 0 || reportIdx < 0 || clearIdx > reportIdx {
+		t.Fatalf("correct order should clear before report; reportIdx=%d clearIdx=%d out=%q",
+			reportIdx, clearIdx, out)
+	}
+}
+
 func TestTruncateMiddleRootDisplay(t *testing.T) {
 	t.Parallel()
 	long := "/Users/example/very/deep/nested/path/to/project/src"
