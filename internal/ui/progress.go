@@ -293,7 +293,7 @@ func (p *Progress) writeFrame(lines []string) {
 	p.mu.Unlock()
 	// Subsequent frames rewrite in place; first frame has prev == 0.
 	if prev > 0 {
-		b.WriteString(fmt.Sprintf("\033[%dA", prev))
+		fmt.Fprintf(&b, "\033[%dA", prev)
 	}
 	for _, line := range lines {
 		b.WriteString("\033[2K")
@@ -308,11 +308,11 @@ func (p *Progress) clear(lines int) {
 		return
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\033[%dA", lines))
+	fmt.Fprintf(&b, "\033[%dA", lines)
 	for i := 0; i < lines; i++ {
 		b.WriteString("\033[2K\n")
 	}
-	b.WriteString(fmt.Sprintf("\033[%dA", lines))
+	fmt.Fprintf(&b, "\033[%dA", lines)
 	_, _ = io.WriteString(p.out, b.String())
 }
 

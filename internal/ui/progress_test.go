@@ -36,12 +36,11 @@ func TestShouldShowProgress(t *testing.T) {
 		isDirectory bool
 		json        bool
 		noProgress  bool
-		want        bool
 	}{
-		{name: "directory ok", isDirectory: true, want: true},
-		{name: "file", isDirectory: false, want: false},
-		{name: "json", isDirectory: true, json: true, want: false},
-		{name: "no-progress", isDirectory: true, noProgress: true, want: false},
+		{name: "directory ok", isDirectory: true},
+		{name: "file", isDirectory: false},
+		{name: "json", isDirectory: true, json: true},
+		{name: "no-progress", isDirectory: true, noProgress: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,13 +51,8 @@ func TestShouldShowProgress(t *testing.T) {
 				t.Fatalf("with nil stderr want false, got true")
 			}
 			if !tc.isDirectory || tc.json || tc.noProgress {
-				if ShouldShowProgress(tc.isDirectory, tc.json, tc.noProgress, os.Stderr) && tc.want {
-					// may be true only if stderr is a TTY and gates pass
-				}
-				if tc.json || tc.noProgress || !tc.isDirectory {
-					if ShouldShowProgress(tc.isDirectory, tc.json, tc.noProgress, os.Stderr) {
-						t.Fatalf("expected false for blocked gates")
-					}
+				if ShouldShowProgress(tc.isDirectory, tc.json, tc.noProgress, os.Stderr) {
+					t.Fatalf("expected false for blocked gates")
 				}
 			}
 		})
