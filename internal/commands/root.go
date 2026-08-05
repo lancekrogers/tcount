@@ -208,28 +208,61 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		return err
 	}
 
-	// Clear the live progress frame before any final report. Progress paints
-	// on stderr with in-place ANSI rewrites; stdout/stderr share the TTY
-	// cursor. If Stop runs after outputTable (via defer only), clear moves up
-	// into the report, clips the table bottom border, and leaves the counting
-	// frame in scrollback above the results.
-	stopProgress()
+	// Sole success-path bridge from counting → user-facing output. Always
+	// clears progress inside presentCountResult before any report I/O.
+	return presentCountResult(result, path, content, isDirectory, opts, display, stopProgress)
+}
 
-	result.FilePath = path
-	result.IsDirectory = isDirectory
-	if !isDirectory {
-		result.FileSize = len(content)
-	} else if opts.stats != nil {
-		outputStats(display, opts.stats.Snapshot(), cacheDiagnosticsMode(opts))
+// presentCountResult clears live directory progress, then writes the final
+// count output. All success-path reporting must go through here so Stop cannot
+// run after the report on the shared TTY cursor (large-dir table clip bug).
+//
+// Order is structural: stop runs before countOutputWriter; callers cannot emit
+// JSON/table/tokens without clearing first. defer stopProgress remains for
+// error paths only (stop is idempotent).
+func presentCountResult(
+	result *tokenizer.CountResult,
+	path string,
+	content []byte,
+	isDirectory bool,
+	opts *countOptions,
+	display *ui.UI,
+	stopProgress func(),
+) error {
+	return emitAfterProgress(stopProgress, func() error {
+		result.FilePath = path
+		result.IsDirectory = isDirectory
+		if !isDirectory {
+			result.FileSize = len(content)
+		} else if opts.stats != nil {
+			outputStats(display, opts.stats.Snapshot(), cacheDiagnosticsMode(opts))
+		}
+		return countOutputWriter(result, opts)
+	})
+}
+
+// emitAfterProgress clears the progress frame, then runs emit. Extracted so
+// tests can lock stop-before-output without depending on TTY/progress paint.
+func emitAfterProgress(stop func(), emit func() error) error {
+	if stop != nil {
+		stop()
 	}
+	return emit()
+}
 
+// countOutputWriter is the final report sink used by presentCountResult.
+// Production points at writeCountOutput; tests swap it to assert ordering.
+var countOutputWriter = writeCountOutput
+
+// writeCountOutput renders the final count result. Call only after progress is
+// cleared (see presentCountResult).
+func writeCountOutput(result *tokenizer.CountResult, opts *countOptions) error {
 	if opts.jsonOutput {
 		return outputJSON(result)
 	}
 	if opts.tokensOnly {
 		return outputTokensOnly(result)
 	}
-
 	return outputTable(result, opts.showModels)
 }
 
@@ -287,9 +320,9 @@ func countResult(
 // discovery with the walked file total and wires OnProgress; stop clears any
 // painted frame (safe to call more than once).
 //
-// Callers must invoke stop after counting finishes and before writing the final
-// report/JSON/tokens output. Defer alone is not enough: Stop uses cursor-up
-// clears on the shared TTY and will clip the report if it runs afterward.
+// On the success path, stop is invoked only via presentCountResult (before
+// report I/O). Defer stop for error returns; do not write the final report
+// outside presentCountResult while a frame may still be painted.
 func armDirectoryProgress(path string, opts *countOptions) (start, stop func(), attach func([]string, *tokenizer.CountFilesOptions)) {
 	var progress *ui.Progress
 	stop = func() {
