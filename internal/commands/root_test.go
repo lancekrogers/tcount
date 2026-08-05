@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
+	"github.com/lancekrogers/tcount/internal/ui"
 	"github.com/lancekrogers/tcount/tokenizer"
 )
 
@@ -391,5 +394,96 @@ func TestCacheDiagnosticsHelpers(t *testing.T) {
 	}
 	if got := formatCacheReasons(reasons); got != "content_changed=1,metadata_assumed=4,schema_mismatch=2" {
 		t.Fatalf("formatted cache reasons = %q", got)
+	}
+}
+
+func TestEmitAfterProgressStopsBeforeEmit(t *testing.T) {
+	t.Parallel()
+
+	var order []string
+	err := emitAfterProgress(
+		func() { order = append(order, "stop") },
+		func() error {
+			order = append(order, "emit")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("emitAfterProgress error: %v", err)
+	}
+	want := []string{"stop", "emit"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+}
+
+func TestEmitAfterProgressNilStopStillEmits(t *testing.T) {
+	t.Parallel()
+
+	emitted := false
+	err := emitAfterProgress(nil, func() error {
+		emitted = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("emitAfterProgress error: %v", err)
+	}
+	if !emitted {
+		t.Fatal("expected emit with nil stop")
+	}
+}
+
+func TestEmitAfterProgressPropagatesEmitError(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("emit failed")
+	err := emitAfterProgress(func() {}, func() error { return want })
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
+// TestPresentCountResultStopsBeforeOutput locks the production success path:
+// presentCountResult must clear progress before the report writer runs.
+// Reordering stop after countOutputWriter fails this test.
+func TestPresentCountResultStopsBeforeOutput(t *testing.T) {
+	var order []string
+
+	oldWriter := countOutputWriter
+	t.Cleanup(func() { countOutputWriter = oldWriter })
+	countOutputWriter = func(result *tokenizer.CountResult, opts *countOptions) error {
+		order = append(order, "write")
+		if result.FilePath != "sample.txt" || result.FileSize != 4 {
+			t.Errorf("metadata must be set before write: path=%q size=%d", result.FilePath, result.FileSize)
+		}
+		return nil
+	}
+
+	result := &tokenizer.CountResult{
+		Characters: 4,
+		Words:      1,
+		Lines:      1,
+		Methods: []tokenizer.MethodResult{{
+			Name:        tokenizer.EncodingCL100kBase,
+			DisplayName: "cl100k_base",
+			Tokens:      42,
+			IsExact:     true,
+		}},
+	}
+	err := presentCountResult(
+		result,
+		"sample.txt",
+		[]byte("test"),
+		false,
+		&countOptions{tokensOnly: true},
+		ui.New(true, false),
+		func() { order = append(order, "stop") },
+	)
+	if err != nil {
+		t.Fatalf("presentCountResult: %v", err)
+	}
+	want := []string{"stop", "write"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("order = %v, want %v (stop must clear progress before report I/O)", order, want)
 	}
 }
