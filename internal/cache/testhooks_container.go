@@ -30,3 +30,27 @@ func runManifestTestHook(ctx context.Context, path, temporaryPath string) error 
 	}
 	return fn(ctx, path, temporaryPath)
 }
+
+var directorySyncTestHook struct {
+	sync.RWMutex
+	fn func(string) error
+}
+
+// SetDirectorySyncTestHook observes or injects parent-directory fsync
+// failures after the atomic rename. The real directory sync still runs when
+// the hook returns nil.
+func SetDirectorySyncTestHook(fn func(string) error) {
+	directorySyncTestHook.Lock()
+	directorySyncTestHook.fn = fn
+	directorySyncTestHook.Unlock()
+}
+
+func runDirectorySyncTestHook(directory string) error {
+	directorySyncTestHook.RLock()
+	fn := directorySyncTestHook.fn
+	directorySyncTestHook.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(directory)
+}
