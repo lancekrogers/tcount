@@ -25,7 +25,10 @@ on a hit. It does not store source file contents. The canonical root, relative
 paths, metadata, and token counts may still reveal sensitive project
 information, so use an appropriate cache parent and clear it when required.
 
-Cached writes and `cache clear --all` share a user-wide lifecycle lock in this
+Cached writes publish with a same-directory temp file, file sync, close,
+atomic rename, and parent-directory sync. Concurrent writers take an exclusive
+inter-process lock (`flock` on Unix, `LockFileEx` on Windows). Cached writes
+and `cache clear --all` also share a user-wide lifecycle lock in this
 experimental v1 implementation. That keeps root creation, generation commits,
 membership pruning, and clearing coordinated, but serializes cached writes for
 different roots. Revisit the lock scope if concurrent multi-repository

@@ -49,14 +49,16 @@ All acceptance gates passed with documented evidence in the Festival results:
 - Verified performance, CPU/RSS, bytes read, and manifest costs are recorded.
 - Full 2k/20k/100k validation and manifest tiers passed.
 
-The following are intentionally not release blockers but remain outside the
-current capacity evidence: full 100k cache tokenization, medium all-method
-cache population, Windows writer-lock persistence, and parent-directory fsync
-power-loss durability. They are tracked as campaign intents:
+Windows writer-lock persistence and parent-directory fsync are implemented in
+the v1 store: commits take exclusive `LockFileEx` on Windows (and `flock` on
+Unix), and `WriteManifestAtomic` fsyncs the parent directory after rename.
+Windows parent sync opens the directory with write access rather than
+`os.Open`, so `FlushFileBuffers` is not rejected as `ERROR_ACCESS_DENIED`.
+Physical power-loss hardware replay is still not part of the acceptance
+evidence. The remaining capacity follow-ups are tracked as campaign intents:
 
 - `.campaign/intents/inbox/evaluate-verified-by-default-cache-20260713-172606.md`
 - `.campaign/intents/inbox/run-full-100k-file-and-20260713-172613.md`
-- `.campaign/intents/inbox/harden-cross-platform-cache-durability-20260713-172617.md`
 
 ## Reconsideration criteria
 

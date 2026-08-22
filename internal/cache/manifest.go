@@ -130,7 +130,7 @@ func MergeEntries(base Manifest, updates UpdateSet) (Manifest, error) {
 }
 
 // WriteManifestAtomic publishes a complete manifest through a same-directory
-// temporary file, sync, close, and rename sequence.
+// temporary file, file sync, close, atomic rename, and parent-directory sync.
 func WriteManifestAtomic(ctx context.Context, path string, manifest Manifest) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -168,6 +168,10 @@ func WriteManifestAtomic(ctx context.Context, path string, manifest Manifest) er
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("closing manifest: %w", err)
 	}
+	return publishManifestFile(ctx, path, temporaryPath)
+}
+
+func publishManifestFile(ctx context.Context, path, temporaryPath string) error {
 	if err := runManifestTestHook(ctx, path, temporaryPath); err != nil {
 		return err
 	}
@@ -176,6 +180,9 @@ func WriteManifestAtomic(ctx context.Context, path string, manifest Manifest) er
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("publishing manifest: %w", err)
+	}
+	if err := syncParentDirectory(path); err != nil {
+		return fmt.Errorf("durability sync after publishing manifest: %w", err)
 	}
 	return nil
 }

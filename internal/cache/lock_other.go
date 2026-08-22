@@ -1,4 +1,4 @@
-//go:build !darwin && !dragonfly && !freebsd && !linux && !netbsd && !openbsd && !solaris
+//go:build !unix && !windows
 
 package cache
 
