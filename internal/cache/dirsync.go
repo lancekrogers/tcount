@@ -2,7 +2,6 @@ package cache
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
@@ -18,7 +17,7 @@ func syncDirectory(directory string) error {
 	if directory == "" || directory == "." {
 		return nil
 	}
-	file, err := os.Open(directory)
+	file, err := openDirectoryForSync(directory)
 	if err != nil {
 		return fmt.Errorf("opening parent directory for sync: %w", err)
 	}

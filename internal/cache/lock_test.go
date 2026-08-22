@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -105,13 +106,14 @@ func TestWrapLockAcquireErrorPreservesContext(t *testing.T) {
 
 func TestWindowsCachePackageCrossCompiles(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("native Windows build already covers the lock implementation")
+		t.Skip("native Windows tests already cover the Windows implementation")
 	}
-	cmd := exec.Command("go", "build", "github.com/lancekrogers/tcount/internal/cache")
+	output := filepath.Join(t.TempDir(), "cache.test.exe")
+	cmd := exec.Command("go", "test", "-c", "-o", output, "github.com/lancekrogers/tcount/internal/cache")
 	cmd.Env = append(osEnvironWithoutGoOSArch(), "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("GOOS=windows go build ./internal/cache: %v\n%s", err, out)
+		t.Fatalf("GOOS=windows go test -c ./internal/cache: %v\n%s", err, out)
 	}
 }
 

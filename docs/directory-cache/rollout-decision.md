@@ -52,6 +52,8 @@ All acceptance gates passed with documented evidence in the Festival results:
 Windows writer-lock persistence and parent-directory fsync are implemented in
 the v1 store: commits take exclusive `LockFileEx` on Windows (and `flock` on
 Unix), and `WriteManifestAtomic` fsyncs the parent directory after rename.
+Windows parent sync opens the directory with write access rather than
+`os.Open`, so `FlushFileBuffers` is not rejected as `ERROR_ACCESS_DENIED`.
 Physical power-loss hardware replay is still not part of the acceptance
 evidence. The remaining capacity follow-ups are tracked as campaign intents:
 
