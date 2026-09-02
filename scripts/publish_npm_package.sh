@@ -42,6 +42,19 @@ echo "Package: ${PACKAGE_NAME}@${VERSION}"
 echo "Dist tag: ${NPM_DIST_TAG}"
 echo "Package directory: ${PACKAGE_DIR}"
 
+# actions/setup-node with registry-url exports NODE_AUTH_TOKEN=XXXXX and writes
+# _authToken into .npmrc. npm then authenticates with that dummy token and
+# never attempts GitHub OIDC trusted publishing (E404 on scoped packages).
+if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+    echo "Unsetting NODE_AUTH_TOKEN so npm can use GitHub OIDC trusted publishing"
+    unset NODE_AUTH_TOKEN
+fi
+if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "${NPM_CONFIG_USERCONFIG}" ]; then
+    tmp="$(mktemp)"
+    grep -Ev '_authToken|always-auth' "${NPM_CONFIG_USERCONFIG}" >"$tmp" || true
+    mv "$tmp" "${NPM_CONFIG_USERCONFIG}"
+fi
+
 can_publish_interactively() {
     [ "${NPM_PUBLISH_INTERACTIVE:-auto}" != "never" ] &&
         [ "${CI:-}" != "true" ] &&
