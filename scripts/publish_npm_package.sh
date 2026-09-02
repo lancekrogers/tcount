@@ -55,7 +55,7 @@ if [ "${NPM_SKIP_EXISTING_CHECK:-false}" != "true" ] && npm view "${PACKAGE_NAME
 fi
 
 pushd "$PACKAGE_DIR" >/dev/null
-npm version "$VERSION" --no-git-tag-version
+npm version "$VERSION" --no-git-tag-version --allow-same-version
 
 set +e
 publish_args=(publish --access public --tag "$NPM_DIST_TAG")
