@@ -150,6 +150,12 @@ jobs:
     needs: release
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # npm Trusted Publishing (OIDC). Do not set NODE_AUTH_TOKEN / NPM_TOKEN
+    # here: a long-lived token makes npm skip the GitHub OIDC exchange.
+    # npmjs.com trusted publisher must name this file exactly: release.yml
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -162,7 +168,6 @@ jobs:
 
       - name: Publish npm package (latest)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_MODE: stable
         run: scripts/publish_npm_package.sh
 
@@ -170,6 +175,9 @@ jobs:
     # Manual backfill or publish to specific channels (rc/dev)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -188,7 +196,6 @@ jobs:
 
       - name: Publish npm package
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_PACKAGE_DIR: release-source/npm
           NPM_PACKAGE_VERSION: ${{ inputs.version }}
           RELEASE_MODE: ${{ inputs.release_mode }}

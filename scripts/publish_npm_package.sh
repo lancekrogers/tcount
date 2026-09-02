@@ -76,7 +76,9 @@ printf '%s\n' "$publish_output"
 
 if [ "$publish_status" -ne 0 ]; then
     if printf '%s\n' "$publish_output" | grep -q 'EOTP'; then
-        echo "::error::npm publish requires OTP. Re-run from an interactive terminal so npm can prompt for your configured verification method, configure npm trusted publishing, or replace NPM_TOKEN with a granular token that has bypass 2FA enabled." >&2
+        echo "::error::npm publish requires OTP. Re-run from an interactive terminal so npm can prompt for your configured verification method, or use GitHub Actions npm Trusted Publishing (OIDC) instead of a long-lived token." >&2
+    elif printf '%s\n' "$publish_output" | grep -q 'E404'; then
+        echo "::error::npm publish returned 404 (token cannot publish this package, or OIDC did not run). In CI, grant id-token: write, leave NODE_AUTH_TOKEN unset, and register workflow filename release.yml as a trusted publisher for ${PACKAGE_NAME}." >&2
     fi
     exit "$publish_status"
 fi
