@@ -4,6 +4,7 @@ go 1.25.6
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/creack/pty v1.1.24
 	github.com/dlclark/regexp2 v1.11.5
 	github.com/eliben/go-sentencepiece v0.7.0
 	github.com/mattn/go-isatty v0.0.20

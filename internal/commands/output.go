@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -13,8 +14,13 @@ import (
 	"github.com/lancekrogers/tcount/tokenizer"
 )
 
+// reportWriter is the destination for count reports. Production uses stdout.
+// Tests swap it to share a stream with progress so a late Stop cannot clip
+// the table (the large-dir TTY bug: leftover counting frame, missing ╰).
+var reportWriter io.Writer = os.Stdout
+
 func outputJSON(result *tokenizer.CountResult) error {
-	encoder := json.NewEncoder(os.Stdout)
+	encoder := json.NewEncoder(reportWriter)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(result)
 }
@@ -26,7 +32,7 @@ func outputTokensOnly(result *tokenizer.CountResult) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(tokens)
+	fmt.Fprintln(reportWriter, tokens)
 	return nil
 }
 
@@ -75,11 +81,11 @@ func outputTable(result *tokenizer.CountResult, showModels bool) error {
 	printReportHeader(result)
 
 	rows, showContext := methodRows(result)
-	fmt.Println(sectionStyle.Render("Token Counts by Method"))
-	fmt.Println(renderMethodTable(rows, showContext))
+	fmt.Fprintln(reportWriter, sectionStyle.Render("Token Counts by Method"))
+	fmt.Fprintln(reportWriter, renderMethodTable(rows, showContext).String())
 
 	if showModels {
-		fmt.Println()
+		fmt.Fprintln(reportWriter)
 		outputModelLookup(sectionStyle, labelStyle)
 	}
 
@@ -90,17 +96,17 @@ func outputTable(result *tokenizer.CountResult, showModels bool) error {
 func printReportHeader(result *tokenizer.CountResult) {
 	titleStyle, sectionStyle, labelStyle, valStyle := styles()
 
-	fmt.Println(titleStyle.Render("Token Count Report for: " + displayPath(result)))
-	fmt.Println()
+	fmt.Fprintln(reportWriter, titleStyle.Render("Token Count Report for: "+displayPath(result)))
+	fmt.Fprintln(reportWriter)
 
-	fmt.Println(sectionStyle.Render("Basic Statistics"))
+	fmt.Fprintln(reportWriter, sectionStyle.Render("Basic Statistics"))
 	if result.IsDirectory {
-		fmt.Printf("  %s %s\n", labelStyle.Render("Files:"), valStyle.Render(formatInt(result.FileCount)))
+		fmt.Fprintf(reportWriter, "  %s %s\n", labelStyle.Render("Files:"), valStyle.Render(formatInt(result.FileCount)))
 	}
-	fmt.Printf("  %s %s\n", labelStyle.Render("Characters:"), valStyle.Render(formatInt(result.Characters)))
-	fmt.Printf("  %s %s\n", labelStyle.Render("Words:"), valStyle.Render(formatInt(result.Words)))
-	fmt.Printf("  %s %s\n", labelStyle.Render("Lines:"), valStyle.Render(formatInt(result.Lines)))
-	fmt.Println()
+	fmt.Fprintf(reportWriter, "  %s %s\n", labelStyle.Render("Characters:"), valStyle.Render(formatInt(result.Characters)))
+	fmt.Fprintf(reportWriter, "  %s %s\n", labelStyle.Render("Words:"), valStyle.Render(formatInt(result.Words)))
+	fmt.Fprintf(reportWriter, "  %s %s\n", labelStyle.Render("Lines:"), valStyle.Render(formatInt(result.Lines)))
+	fmt.Fprintln(reportWriter)
 }
 
 // methodRows builds the token table rows. The second return reports whether
@@ -235,7 +241,7 @@ func formatWindow(n int) string {
 
 // outputModelLookup prints the encoding→model mapping.
 func outputModelLookup(sectionStyle, labelStyle lipgloss.Style) {
-	fmt.Println(sectionStyle.Render("Model Lookup"))
+	fmt.Fprintln(reportWriter, sectionStyle.Render("Model Lookup"))
 
 	byEncoding := tokenizer.ModelsByEncoding()
 
@@ -245,6 +251,6 @@ func outputModelLookup(sectionStyle, labelStyle lipgloss.Style) {
 		if !ok {
 			continue
 		}
-		fmt.Printf("  %s %s\n", labelStyle.Render(enc+":"), strings.Join(models, ", "))
+		fmt.Fprintf(reportWriter, "  %s %s\n", labelStyle.Render(enc+":"), strings.Join(models, ", "))
 	}
 }
