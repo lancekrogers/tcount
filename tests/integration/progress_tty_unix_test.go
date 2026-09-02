@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -51,7 +53,11 @@ func TestIntegrationCLI_DirectoryProgressDoesNotClipTable(t *testing.T) {
 			done <- waitErr
 			return
 		}
-		done <- copyErr
+		if copyErr != nil && !isExpectedPtyClose(copyErr) {
+			done <- copyErr
+			return
+		}
+		done <- nil
 	}()
 
 	select {
@@ -75,4 +81,8 @@ func TestIntegrationCLI_DirectoryProgressDoesNotClipTable(t *testing.T) {
 	if cursorUpRE.MatchString(out[bottom:]) {
 		t.Fatalf("progress cursor-up ran after the table bottom border (TTY clip bug):\n%s", out)
 	}
+}
+
+func isExpectedPtyClose(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.EIO)
 }
