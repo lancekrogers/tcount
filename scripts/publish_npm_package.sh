@@ -42,17 +42,41 @@ echo "Package: ${PACKAGE_NAME}@${VERSION}"
 echo "Dist tag: ${NPM_DIST_TAG}"
 echo "Package directory: ${PACKAGE_DIR}"
 
-# actions/setup-node with registry-url exports NODE_AUTH_TOKEN=XXXXX and writes
-# _authToken into .npmrc. npm then authenticates with that dummy token and
-# never attempts GitHub OIDC trusted publishing (E404 on scoped packages).
-if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-    echo "Unsetting NODE_AUTH_TOKEN so npm can use GitHub OIDC trusted publishing"
-    unset NODE_AUTH_TOKEN
-fi
-if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "${NPM_CONFIG_USERCONFIG}" ]; then
-    tmp="$(mktemp)"
-    grep -Ev '_authToken|always-auth' "${NPM_CONFIG_USERCONFIG}" >"$tmp" || true
-    mv "$tmp" "${NPM_CONFIG_USERCONFIG}"
+NPM_MIN_VERSION="11.5.1"
+NODE_MIN_VERSION="22.14.0"
+
+version_at_least() {
+    # version_at_least <minimum> <actual>
+    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
+}
+
+# CI publishes through npm Trusted Publishing (OIDC). actions/setup-node with
+# registry-url exports NODE_AUTH_TOKEN=XXXXX and writes _authToken into an
+# .npmrc it points NPM_CONFIG_USERCONFIG at; npm authenticates with that dummy
+# token and never attempts the OIDC exchange (E404 on scoped packages). Drop
+# both so OIDC runs. Only in CI: a local run may carry a real token on purpose,
+# and its NPM_CONFIG_USERCONFIG is the developer's own file.
+if [ "${CI:-}" = "true" ]; then
+    if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+        echo "Unsetting NODE_AUTH_TOKEN so npm can use GitHub OIDC trusted publishing"
+        unset NODE_AUTH_TOKEN
+    fi
+    if [ -n "${NPM_CONFIG_USERCONFIG:-}" ]; then
+        echo "Unsetting NPM_CONFIG_USERCONFIG (${NPM_CONFIG_USERCONFIG}) so npm does not read a setup-node .npmrc"
+        unset NPM_CONFIG_USERCONFIG
+    fi
+
+    node_version="$(node --version)"
+    node_version="${node_version#v}"
+    npm_version="$(npm --version)"
+    if ! version_at_least "$NODE_MIN_VERSION" "$node_version"; then
+        echo "::error::Node ${node_version} is below ${NODE_MIN_VERSION}, the minimum for npm trusted publishing. Raise node-version in release.yml." >&2
+        exit 1
+    fi
+    if ! version_at_least "$NPM_MIN_VERSION" "$npm_version"; then
+        echo "::error::npm ${npm_version} is below ${NPM_MIN_VERSION}, the minimum for npm trusted publishing. Pin npm in release.yml (npm install -g npm@^${NPM_MIN_VERSION})." >&2
+        exit 1
+    fi
 fi
 
 can_publish_interactively() {
