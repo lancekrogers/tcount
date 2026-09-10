@@ -164,7 +164,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # Do not set registry-url. It writes _authToken=${NODE_AUTH_TOKEN}
+          # and exports a dummy XXXXX token, which makes npm skip OIDC.
 
       - name: Publish npm package (latest)
         env:
@@ -192,7 +193,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # Do not set registry-url. It writes _authToken=${NODE_AUTH_TOKEN}
+          # and exports a dummy XXXXX token, which makes npm skip OIDC.
 
       - name: Publish npm package
         env:
