@@ -25,7 +25,7 @@ A fast token counter for LLM workflows that runs entirely on your machine: no AP
 - **SentencePiece** exact tokenization for Llama and other open-source models (bring your own `.model` file)
 - **Context window usage** — see what percentage of a model's context you're consuming (shown when you pass `--model`)
 - **Provider filtering** — compare models from a specific provider
-- **Directory scanning** — `.gitignore`-aware, skips binaries, counts files in parallel with memory bounded by your largest file
+- **Directory scanning** — honors nested `.gitignore` files, skips binaries and model weights, optional `--max-file-size` cap, counts files in parallel with memory bounded by your largest file
 - **Live counting progress** — on a TTY, recursive counts show a spinner and rising file/char totals while work runs (disable with `--no-progress`; never shown for `--json` or `--tokens`)
 - **Unix filter mode** — read stdin when no path is given or when the path is `-`; pair with `--tokens` for a single integer on stdout
 - **JSON output** for scripting and pipelines
@@ -205,6 +205,7 @@ Omit the path (or pass `-`) to read standard input like `wc`.
 | `--cache` | | Enable experimental persistent caching for recursive directory counts |
 | `--no-cache` | | Force a cold count without reading or writing cache state |
 | `--cache-verify` | | Hash file contents before reusing cache entries; requires `--cache` |
+| `--max-file-size` | | Skip files larger than this many bytes when counting a directory (0 = no limit) |
 | `--chars-per-token` | | Character/token ratio for approximation (default: 4.0) |
 | `--words-per-token` | | Words/token ratio for approximation (default: 0.75) |
 | `--verbose` | | Show additional details |
@@ -265,7 +266,7 @@ tcount -d --no-progress ./src
 tcount -d --verbose ./src
 ```
 
-When scanning directories, tcount respects `.gitignore` rules, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Progress is omitted for `--json`, non-TTY stderr, and `--no-progress`.
+When scanning directories, tcount respects every `.gitignore` it finds, including nested ones, skips binary files and `.git` directories, counts each file individually on a bounded worker pool, and sums the results. A directory excluded by an ignore rule is never descended into. Binary detection covers model weights and serialized data (`.onnx`, `.safetensors`, `.gguf`, `.parquet`, and friends) plus content that carries dense binary framing, so a checked-in model never reaches the tokenizer. Use `--max-file-size` to skip anything above a byte threshold when token counts are advisory. Counting per file keeps memory proportional to the largest file rather than the whole tree, and tokens never merge across file boundaries (the sum matches counting each file on its own). Progress is omitted for `--json`, non-TTY stderr, and `--no-progress`.
 
 ### Experimental directory cache
 
@@ -412,10 +413,16 @@ ctx := context.Background()
 // Count tokens in a single file
 result, err := counter.CountFile(ctx, "document.md", "gpt-4o", false)
 
-// Count tokens across a directory (respects .gitignore, skips binaries,
-// counts files in parallel and sums the results)
+// Count tokens across a directory (respects nested .gitignore files, skips
+// binaries, counts files in parallel and sums the results)
 result, err := counter.CountDirectory(ctx, "./src", "", true)
 fmt.Printf("Files: %d, Tokens: %d\n", result.FileCount, result.Methods[0].Tokens)
+
+// Skip anything over 4 MiB when token counts are advisory
+result, err = counter.CountDirectoryWithOptions(ctx, "./src", tokenizer.CountDirectoryOptions{
+    All:         true,
+    MaxFileSize: 4 << 20,
+})
 
 // Count an explicit list of files with the same per-file summing
 result, err := counter.CountFiles(ctx, []string{"a.md", "b.md"}, "", true)

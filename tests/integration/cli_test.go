@@ -284,3 +284,36 @@ func TestIntegrationCLI_HelpMentionsFilterMode(t *testing.T) {
 		}
 	}
 }
+
+func TestIntegrationCLI_MaxFileSizeSkipsLargeFiles(t *testing.T) {
+	root := t.TempDir()
+	writeWalkFile(t, root, "small.txt", "alpha beta gamma\n")
+	writeWalkFile(t, root, "big.txt", strings.Repeat("oversized content\n", 200))
+
+	capped := runTcountJSON(t, "--recursive", "--model", "gpt-4o", "--max-file-size", "1024", root)
+	uncapped := runTcountJSON(t, "--recursive", "--model", "gpt-4o", root)
+
+	if capped.FileCount != 1 {
+		t.Errorf("--max-file-size run counted %d files, want 1", capped.FileCount)
+	}
+	if uncapped.FileCount != 2 {
+		t.Errorf("uncapped run counted %d files, want 2", uncapped.FileCount)
+	}
+	if capped.Characters >= uncapped.Characters {
+		t.Errorf("capped Characters = %d, want fewer than uncapped %d",
+			capped.Characters, uncapped.Characters)
+	}
+}
+
+func TestIntegrationCLI_NegativeMaxFileSizeIsRejected(t *testing.T) {
+	root := t.TempDir()
+	writeWalkFile(t, root, "small.txt", "alpha beta gamma\n")
+
+	stdout, stderr, exitCode := runTcount(t, "--recursive", "--max-file-size", "-1", root)
+	if exitCode == 0 {
+		t.Fatalf("expected a nonzero exit code for a negative cap; stdout: %s", stdout)
+	}
+	if !strings.Contains(stderr, "--max-file-size") {
+		t.Errorf("expected the error to name the flag, got: %s", stderr)
+	}
+}
