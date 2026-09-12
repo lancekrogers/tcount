@@ -52,6 +52,14 @@ func validateOutputFlags(opts *countOptions) error {
 	return nil
 }
 
+// validateWalkFlags rejects a size cap that cannot be honored.
+func validateWalkFlags(opts *countOptions) error {
+	if opts.maxFileSize < 0 {
+		return errors.Validation("--max-file-size cannot be negative; use 0 for no limit")
+	}
+	return nil
+}
+
 func validateCacheFlags(opts *countOptions) error {
 	if opts.cache && opts.noCache {
 		return errors.Validation("--cache and --no-cache cannot be used together")

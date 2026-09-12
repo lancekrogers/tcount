@@ -142,21 +142,39 @@ func (c *Counter) CountFile(ctx context.Context, path string, model string, all 
 	return result, nil
 }
 
+// CountDirectoryOptions configures a directory count.
+type CountDirectoryOptions struct {
+	Model string
+	All   bool
+	// MaxFileSize skips files larger than this many bytes. Zero means no
+	// limit. Callers that treat token counts as advisory use it to keep a
+	// single oversized artifact from dominating a directory count.
+	MaxFileSize int64
+}
+
 // CountDirectory counts tokens across all text files in a directory.
-// It walks the directory respecting .gitignore rules and skipping binary
-// files, then counts each file individually via CountFiles, so peak memory
-// tracks the largest file rather than the whole tree.
+// It is equivalent to CountDirectoryWithOptions with no size cap.
 func (c *Counter) CountDirectory(ctx context.Context, path string, model string, all bool) (*CountResult, error) {
+	return c.CountDirectoryWithOptions(ctx, path, CountDirectoryOptions{Model: model, All: all})
+}
+
+// CountDirectoryWithOptions counts tokens across the text files in a
+// directory. It walks the directory respecting every .gitignore found along
+// the way, skipping binary files and files above opts.MaxFileSize, then counts
+// each remaining file individually via CountFiles, so peak memory tracks the
+// largest file rather than the whole tree.
+func (c *Counter) CountDirectoryWithOptions(ctx context.Context, path string, opts CountDirectoryOptions) (*CountResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
+	walkOpts := fileops.WalkOptions{MaxFileSize: opts.MaxFileSize}
 	var walkResult *fileops.WalkResult
 	var err error
 	if c.stats != nil {
-		walkResult, err = fileops.WalkDirectory(ctx, path, c.stats)
+		walkResult, err = fileops.WalkDirectoryWithOptions(ctx, path, walkOpts, c.stats)
 	} else {
-		walkResult, err = fileops.WalkDirectory(ctx, path)
+		walkResult, err = fileops.WalkDirectoryWithOptions(ctx, path, walkOpts)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("walking directory %q: %w", path, err)
@@ -166,7 +184,7 @@ func (c *Counter) CountDirectory(ctx context.Context, path string, model string,
 		return nil, fmt.Errorf("no text files found in directory %q", path)
 	}
 
-	result, err := c.CountFiles(ctx, walkResult.Files, model, all)
+	result, err := c.CountFiles(ctx, walkResult.Files, opts.Model, opts.All)
 	if err != nil {
 		return nil, fmt.Errorf("counting files in %q: %w", path, err)
 	}

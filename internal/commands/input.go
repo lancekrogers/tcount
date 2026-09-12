@@ -74,11 +74,12 @@ func resolveInput(
 		onDirectoryWalkStart()
 	}
 
+	walkOpts := fileops.WalkOptions{MaxFileSize: opts.maxFileSize}
 	var walkResult *fileops.WalkResult
 	if opts.stats != nil {
-		walkResult, err = fileops.WalkDirectory(ctx, path, opts.stats)
+		walkResult, err = fileops.WalkDirectoryWithOptions(ctx, path, walkOpts, opts.stats)
 	} else {
-		walkResult, err = fileops.WalkDirectory(ctx, path)
+		walkResult, err = fileops.WalkDirectoryWithOptions(ctx, path, walkOpts)
 	}
 	if err != nil {
 		return nil, nil, true, errors.IO("walking directory", err).WithField("path", path)

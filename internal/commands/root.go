@@ -34,6 +34,7 @@ type countOptions struct {
 	stats         *tokenizer.Stats
 	charsPerToken float64
 	wordsPerToken float64
+	maxFileSize   int64
 }
 
 // Execute runs the root command with the given version string.
@@ -65,8 +66,9 @@ like a Unix filter (wc, cat). Use --tokens to print only the token count for
 scripting pipelines.
 
 When counting a directory with --recursive, the command:
-  - Respects .gitignore files
+  - Respects .gitignore files, including nested ones
   - Skips binary files automatically
+  - Skips files above --max-file-size when that flag is supplied
   - Counts each text file in parallel and returns summed totals
   - Enables experimental persistence only when --cache is explicitly supplied
   - Hashes file contents before reuse when --cache-verify is supplied`,
@@ -151,6 +153,7 @@ Download vocab files from HuggingFace (see error messages for URLs)`)
 	cmd.Flags().BoolVar(&opts.noProgress, "no-progress", false, "disable live counting progress on the terminal")
 	cmd.Flags().Float64Var(&opts.charsPerToken, "chars-per-token", tokenizer.DefaultCharsPerToken, "characters per token ratio")
 	cmd.Flags().Float64Var(&opts.wordsPerToken, "words-per-token", tokenizer.DefaultWordsPerToken, "words per token ratio")
+	cmd.Flags().Int64Var(&opts.maxFileSize, "max-file-size", 0, "skip files larger than this many bytes when counting a directory (0 = no limit)")
 }
 
 func runCount(ctx context.Context, path string, opts *countOptions) error {
@@ -162,6 +165,9 @@ func runCount(ctx context.Context, path string, opts *countOptions) error {
 		return err
 	}
 	if err := validateCacheFlags(opts); err != nil {
+		return err
+	}
+	if err := validateWalkFlags(opts); err != nil {
 		return err
 	}
 	if err := validateStdinFlags(path, opts); err != nil {
