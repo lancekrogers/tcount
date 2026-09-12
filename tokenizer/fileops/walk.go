@@ -78,12 +78,23 @@ func WalkDirectoryWithOptions(ctx context.Context, rootPath string, opts WalkOpt
 		}()
 	}
 
+	// filepath.Walk hands the root to the callback verbatim but builds every
+	// child with filepath.Join, which cleans. Walking "." therefore yields "."
+	// and then bare names like "app.log", and a scope anchored at "." would
+	// look like it no longer contains its own children. Resolving the root
+	// once keeps every callback path prefix-consistent with the scope
+	// directories derived from it.
+	resolvedRoot, err := filepath.Abs(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolving walk root %s: %w", rootPath, err)
+	}
+
 	result := &WalkResult{
 		Files: []string{},
 	}
 	var scopes []ignoreScope
 
-	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(resolvedRoot, func(path string, info os.FileInfo, err error) error {
 		if collector != nil && info != nil {
 			collector.RecordEntryVisited()
 		}
@@ -122,9 +133,11 @@ func WalkDirectoryWithOptions(ctx context.Context, rootPath string, opts WalkOpt
 			return nil
 		}
 
-		if size, known := entrySize(path, info); known && exceedsMaxFileSize(size, opts.MaxFileSize) {
-			result.SkippedLarge++
-			return nil
+		if opts.MaxFileSize > 0 {
+			if size, known := entrySize(path, info); known && size > opts.MaxFileSize {
+				result.SkippedLarge++
+				return nil
+			}
 		}
 
 		var isBinary bool
@@ -142,7 +155,11 @@ func WalkDirectoryWithOptions(ctx context.Context, rootPath string, opts WalkOpt
 			return nil
 		}
 
-		result.Files = append(result.Files, path)
+		callerPath, restoreErr := restoreRootForm(rootPath, resolvedRoot, path)
+		if restoreErr != nil {
+			return restoreErr
+		}
+		result.Files = append(result.Files, callerPath)
 		if collector != nil {
 			collector.RecordEligibleFile()
 		}
@@ -182,8 +199,31 @@ func popScopes(scopes []ignoreScope, path string) []ignoreScope {
 	return scopes
 }
 
+// restoreRootForm maps a path under the resolved root back to the form the
+// caller wrote their root in, so WalkResult.Files keeps the shape every
+// existing consumer already sees: a relative root yields relative results and
+// an absolute root yields absolute ones.
+func restoreRootForm(rootPath, resolvedRoot, path string) (string, error) {
+	if path == resolvedRoot {
+		return rootPath, nil
+	}
+
+	relative, err := filepath.Rel(resolvedRoot, path)
+	if err != nil {
+		return "", fmt.Errorf("relating %s to walk root %s: %w", path, resolvedRoot, err)
+	}
+	return filepath.Join(rootPath, relative), nil
+}
+
 // matchesAnyScope reports whether any active .gitignore excludes path. Each
 // scope sees the path relative to its own directory.
+//
+// Any scope that matches wins, so negation is honored only within the single
+// .gitignore that declares it: a nested "!pattern" cannot re-include a file
+// that an ancestor .gitignore excludes. Git behaves the same way once the
+// ancestor rule names a directory, and the divergence for an ancestor rule
+// naming files is deliberate, since re-including across files would mean
+// evaluating every scope in order rather than stopping at the first match.
 func matchesAnyScope(scopes []ignoreScope, path string, isDir bool) bool {
 	for _, scope := range scopes {
 		relPath, err := filepath.Rel(scope.dir, path)
@@ -215,7 +255,9 @@ func withinDir(dir, path string) bool {
 	return strings.HasPrefix(path, dir)
 }
 
-// entrySize reports the size a per-file cap should measure. filepath.Walk
+// entrySize reports the size a per-file cap should measure. It is consulted
+// only when a cap is active, so no symlink is resolved on the default path.
+// filepath.Walk
 // hands back an Lstat result, so a symlink reports the length of its target
 // path rather than the size of the file it points at. A broken link reports no
 // size and falls through to binary detection, which skips it as before.
@@ -229,11 +271,6 @@ func entrySize(path string, info os.FileInfo) (int64, bool) {
 		return 0, false
 	}
 	return target.Size(), true
-}
-
-// exceedsMaxFileSize reports whether a file is above an active cap.
-func exceedsMaxFileSize(size, maxFileSize int64) bool {
-	return maxFileSize > 0 && size > maxFileSize
 }
 
 // AggregateFileContents reads all files and returns combined content.

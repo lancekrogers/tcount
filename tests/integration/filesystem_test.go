@@ -400,3 +400,87 @@ func TestIntegrationFilesystem_CountDirectoryHonorsMaxFileSize(t *testing.T) {
 		t.Errorf("uncapped FileCount = %d, want 2", uncapped.FileCount)
 	}
 }
+
+// relativeRootTree builds a tree and makes it the working directory, so a walk
+// can be rooted at "." or "./sub" the way the CLI is normally invoked.
+func relativeRootTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+
+	writeWalkFile(t, root, ".gitignore", "*.log\n")
+	writeWalkFile(t, root, "app.log", "root log\n")
+	writeWalkFile(t, root, "README.md", "# readme\n")
+	writeWalkFile(t, root, "sub/.gitignore", "*.log\n")
+	writeWalkFile(t, root, "sub/main.go", "package main\n")
+	writeWalkFile(t, root, "sub/debug.log", "sub log\n")
+
+	t.Chdir(root)
+	return root
+}
+
+func TestIntegrationFilesystem_DotRootHonorsRootGitignore(t *testing.T) {
+	ctx := context.Background()
+	root := relativeRootTree(t)
+
+	result, err := fileops.WalkDirectory(ctx, ".")
+	if err != nil {
+		t.Fatalf("WalkDirectory() error: %v", err)
+	}
+
+	got := walkRelativeFiles(t, ".", result.Files)
+	want := []string{".gitignore", "README.md", "sub/.gitignore", "sub/main.go"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("walked files = %v, want %v; a root .gitignore must apply when the root is %q", got, want, ".")
+	}
+	if result.SkippedIgnore != 2 {
+		t.Errorf("SkippedIgnore = %d, want 2 (app.log and sub/debug.log)", result.SkippedIgnore)
+	}
+
+	// The results keep the caller's root form rather than becoming absolute.
+	for _, file := range result.Files {
+		if filepath.IsAbs(file) {
+			t.Errorf("walking %q returned absolute path %q; results must keep the caller's root form", ".", file)
+		}
+	}
+
+	// Control: the same tree walked from its absolute root yields the same set.
+	absolute, err := fileops.WalkDirectory(ctx, root)
+	if err != nil {
+		t.Fatalf("WalkDirectory(absolute) error: %v", err)
+	}
+	if absoluteGot := walkRelativeFiles(t, root, absolute.Files); !slices.Equal(absoluteGot, want) {
+		t.Errorf("absolute-root walk = %v, want %v", absoluteGot, want)
+	}
+	if absolute.SkippedIgnore != result.SkippedIgnore {
+		t.Errorf("absolute-root SkippedIgnore = %d, relative-root = %d; they must agree",
+			absolute.SkippedIgnore, result.SkippedIgnore)
+	}
+}
+
+func TestIntegrationFilesystem_DottedSubdirectoryRootHonorsItsGitignore(t *testing.T) {
+	ctx := context.Background()
+	root := relativeRootTree(t)
+
+	result, err := fileops.WalkDirectory(ctx, "./sub")
+	if err != nil {
+		t.Fatalf("WalkDirectory() error: %v", err)
+	}
+
+	got := walkRelativeFiles(t, "./sub", result.Files)
+	want := []string{".gitignore", "main.go"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("walked files = %v, want %v; the subdirectory .gitignore must apply when the root is %q",
+			got, want, "./sub")
+	}
+	if result.SkippedIgnore != 1 {
+		t.Errorf("SkippedIgnore = %d, want 1 (sub/debug.log)", result.SkippedIgnore)
+	}
+
+	absolute, err := fileops.WalkDirectory(ctx, filepath.Join(root, "sub"))
+	if err != nil {
+		t.Fatalf("WalkDirectory(absolute) error: %v", err)
+	}
+	if absoluteGot := walkRelativeFiles(t, filepath.Join(root, "sub"), absolute.Files); !slices.Equal(absoluteGot, want) {
+		t.Errorf("absolute-root walk = %v, want %v", absoluteGot, want)
+	}
+}
