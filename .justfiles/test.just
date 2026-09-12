@@ -2,22 +2,46 @@ set working-directory := '..'
 
 BUILDTOOL := "go run ./internal/buildutil"
 
+# tcount's integration tests are host `go test` runs selected by name. The
+# build-util `integration` command instead cross-compiles a Linux binary and
+# runs Docker suites under tests/integration, so this lane calls `go test`
+# directly and `all` is composed here rather than delegated to `buildutil all`.
+INTEGRATION_ARGS := "-run Integration -timeout 60s ./..."
+
 # Show available test recipes
 [private]
 @default:
     just --list --justfile {{ source_file() }}
 
-# Run all tests (unit + integration, with dashboard)
+# Run all tests (clean, build, unit, integration)
 all:
-    @{{ BUILDTOOL }} all
+    #!/usr/bin/env bash
+    set -uo pipefail
+    failures=0
+    printf '\n🧹 Cleaning...\n'
+    {{ BUILDTOOL }} clean || failures=$((failures + 1))
+    printf '\n🔨 Building...\n'
+    if ! {{ BUILDTOOL }} build; then
+        printf '\nstopping due to build failure\n' >&2
+        exit 1
+    fi
+    printf '\n🧪 Testing...\n'
+    {{ BUILDTOOL }} test || failures=$((failures + 1))
+    printf '\n🔗 Integration Testing...\n'
+    go test {{ INTEGRATION_ARGS }} || failures=$((failures + 1))
+    if [ "$failures" -gt 0 ]; then
+        printf '\n✗ %d tasks failed\n' "$failures" >&2
+        exit 1
+    fi
+    printf '\n✓ All tasks complete\n'
 
 # Run unit tests (with dashboard)
 unit:
     @{{ BUILDTOOL }} test
 
-# Run integration tests (with dashboard)
+# Run integration tests on the host (no Docker; see INTEGRATION_ARGS note above)
 integration:
-    @{{ BUILDTOOL }} integration
+    go test {{ INTEGRATION_ARGS }}
 
 # Run tests with coverage
 coverage:
